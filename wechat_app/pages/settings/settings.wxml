@@ -1,0 +1,20 @@
+<view class="page">
+ <view class="title">{{mode === 'fence' ? '日常电子围栏' : mode === 'trip' ? '本次目的地' : '提醒时间'}}</view>
+ <view class="error" wx:if="{{error}}">{{error}}</view>
+ <button wx:if="{{conflict || !loaded}}" bindtap="reload" disabled="{{busy}}">重新载入最新设置</button>
+ <view wx:if="{{loaded}}">
+  <view class="card" wx:if="{{mode !== 'threshold'}}">
+   <view class="muted">点击地图选择{{mode === 'fence' ? '围栏中心' : '目的地'}}，或填写 WGS-84 经纬度。地图暂不提供地点搜索。</view>
+   <map class="map" latitude="{{mapLat}}" longitude="{{mapLon}}" markers="{{markers}}" circles="{{circles}}" scale="14" bindtap="tapMap"/>
+   <button bindtap="useLast" disabled="{{busy}}">使用老人最近上报位置</button>
+   <view class="label">纬度（WGS-84）</view><input value="{{form.lat}}" data-field="lat" bindinput="input" disabled="{{busy}}"/>
+   <view class="label">经度（WGS-84）</view><input value="{{form.lon}}" data-field="lon" bindinput="input" disabled="{{busy}}"/>
+   <view class="label">{{mode === 'fence' ? '围栏半径：100–10000 米' : '到达半径：100–2000 米'}}</view><input type="digit" value="{{form.radius}}" data-field="radius" bindinput="input" disabled="{{busy}}"/>
+   <view wx:if="{{mode === 'trip'}}"><view class="label">目的地名称</view><input value="{{form.name}}" data-field="name" maxlength="100" bindinput="input" disabled="{{busy}}"/><view class="label">预计多少分钟后到达</view><input type="number" value="{{form.minutes}}" data-field="minutes" bindinput="input" disabled="{{busy}}"/></view>
+  </view>
+  <view class="card" wx:else><view class="label">持续越界后提醒（秒，30–1800）</view><input type="number" value="{{form.outside}}" data-field="outside" bindinput="input" disabled="{{busy}}"/><view class="label">位置未更新后提醒（秒，180–3600）</view><input type="number" value="{{form.offline}}" data-field="offline" bindinput="input" disabled="{{busy}}"/></view>
+  <button class="primary" bindtap="save" loading="{{busy}}" disabled="{{busy || conflict}}">{{mode === 'trip' ? '确认并开始行程' : '保存设置'}}</button>
+  <button wx:if="{{mode === 'fence'}}" class="danger" bindtap="remove" disabled="{{busy || conflict}}">关闭日常围栏</button>
+  <view class="muted">保存到后台后，还需老人端在下一次位置上报时确认同步。</view>
+ </view>
+</view>

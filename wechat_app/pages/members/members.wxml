@@ -1,0 +1,6 @@
+<view class="page"><view class="title">共同守护</view><view class="error" wx:if="{{error}}">{{error}}</view>
+ <view wx:if="{{elder}}">
+  <view class="card"><view class="heading">邀请家属管理 {{elder.name}}</view><view class="row"><text>允许修改围栏和目的地</text><switch checked="{{canEdit}}" bindchange="toggle" color="#087f8c" disabled="{{busy}}"/></view><view class="muted">不勾选时可查看位置和接手提醒。只有主管理员可以继续邀请、移除人员。</view><button class="primary" bindtap="invite" disabled="{{busy}}">生成一次性邀请</button><view class="code selectable">{{code}}</view><view class="muted" wx:if="{{code}}">有效期至 {{expires}}</view><button wx:if="{{code}}" bindtap="copy">复制邀请代码</button><view class="muted">将代码发给家属，对方用自己的管理账号登录，在首页“接受家属邀请”中输入。</view></view>
+  <view class="heading">已授权家属</view><view class="muted" wx:if="{{!elder.members.length}}">尚未授权其他家属</view>
+  <view class="card" wx:for="{{elder.members}}" wx:key="id"><view class="row"><text>{{item.name}}</text><text class="tag">{{item.can_edit ? '可修改设置' : '查看与接手'}}</text></view><button class="danger" data-id="{{item.id}}" data-name="{{item.name}}" bindtap="remove" disabled="{{busy}}">移除授权</button></view>
+ </view></view>

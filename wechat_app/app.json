@@ -1,0 +1,17 @@
+{
+  "pages": [
+    "pages/login/login",
+    "pages/home/home",
+    "pages/elder/elder",
+    "pages/settings/settings",
+    "pages/members/members"
+  ],
+  "window": {
+    "navigationBarTitleText": "家人守护",
+    "navigationBarBackgroundColor": "#f3f7f7",
+    "navigationBarTextStyle": "black",
+    "backgroundColor": "#f3f7f7"
+  },
+  "style": "v2",
+  "sitemapLocation": "sitemap.json"
+}

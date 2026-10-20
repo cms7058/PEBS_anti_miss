@@ -24,3 +24,10 @@ xcuserdata/
 deploy/secrets/
 deploy/cloud.env
 deploy/backend.env
+
+# WeChat local IDE state and generated artifacts
+project.private.config.json
+wechat_app/node_modules/
+wechat_app/miniprogram_npm/
+wechat_app/.ide/
+wechat_app/.DS_Store

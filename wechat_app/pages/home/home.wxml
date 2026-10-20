@@ -1,0 +1,14 @@
+<view class="page">
+ <view class="row"><view><view class="eyebrow">{{name}} · 家属管理</view><view class="title">我的家人</view></view><button size="mini" bindtap="refresh" disabled="{{busy}}">刷新</button></view>
+ <view class="notice">异常提醒目前在小程序内查看。退出微信或关闭小程序后，尚无微信消息推送。</view>
+ <view class="error" wx:if="{{error}}">{{error}}</view>
+ <view wx:if="{{loaded && !elders.length}}" class="card muted">还没有家人。添加老人，或接受其他家属的邀请。</view>
+ <view class="card" wx:for="{{elders}}" wx:key="id" data-id="{{item.id}}" bindtap="open">
+  <view class="row"><text class="heading">{{item.name}}</text><text class="tag">{{item.paired ? '已绑定' : '待绑定'}}</text></view>
+  <view class="{{item.stale ? 'warning' : 'muted'}}">{{item.lastLabel}}</view><view class="muted">{{item.accuracyLabel}}</view>
+  <view wx:if="{{item.activeCount}}" class="warning">{{item.activeCount}} 条待接手提醒</view><view class="link">查看位置与守护设置 →</view>
+ </view>
+ <view class="card"><view class="heading">添加老人</view><input placeholder="老人称呼，如：妈妈" maxlength="40" value="{{newName}}" data-field="newName" bindinput="input"/><button class="primary" bindtap="add" disabled="{{busy}}">添加并生成绑定码</button></view>
+ <view class="card"><view class="heading">接受家属邀请</view><input placeholder="粘贴家属发来的邀请代码" value="{{invite}}" data-field="invite" bindinput="input"/><button class="secondary" bindtap="accept" disabled="{{busy}}">加入共同守护</button></view>
+ <button class="secondary" bindtap="logout" disabled="{{busy}}">退出账号</button>
+</view>

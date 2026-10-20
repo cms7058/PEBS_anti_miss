@@ -1,0 +1,15 @@
+<view class="page">
+  <view class="eyebrow">家人守护 · 管理端</view><view class="title"><view>让每次出门</view><view>都多一份安心。</view></view>
+  <view class="muted">苹果与鸿蒙微信共用，同步已有管理账号和家人。</view>
+  <view class="notice">当前使用 HTTP 内测服务。体验版需开启调试，退出后重新进入；仅设为体验版不会自动免除微信网络限制。<button class="secondary" bindtap="debug">开启测试调试模式</button></view>
+  <view class="card">
+    <view class="label">服务地址</view><input value="{{server}}" data-field="server" bindinput="input" placeholder="https://你的域名" disabled="{{busy}}"/>
+    <button class="secondary" bindtap="health" disabled="{{busy}}">测试连接</button><view class="muted">{{health}}</view>
+    <view class="label">管理账号</view><input value="{{name}}" data-field="name" bindinput="input" maxlength="40" disabled="{{busy}}"/>
+    <view class="label">密码（至少 10 位）</view><input password value="{{password}}" data-field="password" bindinput="input" maxlength="128" disabled="{{busy}}"/>
+    <view class="row"><text>首次使用，创建账号</text><switch checked="{{register}}" bindchange="toggle" disabled="{{busy}}" color="#087f8c"/></view>
+    <view class="error" wx:if="{{error}}">{{error}}</view>
+    <button class="primary" bindtap="submit" loading="{{busy}}" disabled="{{busy}}">{{register ? '创建账号并进入' : '登录'}}</button>
+  </view>
+  <view class="muted">已有 iOS 管理账号可直接登录，无需重复添加老人。当前登录仅保存在本次小程序会话中。</view>
+</view>

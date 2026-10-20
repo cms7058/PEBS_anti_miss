@@ -1,0 +1,26 @@
+{
+  "appid": "wx4ce2e3522237bc1d",
+  "projectname": "familyguard-manager",
+  "description": "家人守护微信管理端",
+  "compileType": "miniprogram",
+  "miniprogramRoot": "./",
+  "setting": {
+    "urlCheck": false,
+    "es6": true,
+    "enhance": true,
+    "postcss": true,
+    "minified": true
+  },
+  "packOptions": {
+    "ignore": [
+      {
+        "type": "folder",
+        "value": "tests"
+      },
+      {
+        "type": "file",
+        "value": "README.md"
+      }
+    ]
+  }
+}

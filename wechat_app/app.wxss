@@ -1,0 +1,23 @@
+page { background:#f3f7f7; color:#19383e; font-size:30rpx; line-height:1.6; }
+.page { padding:38rpx 30rpx 80rpx; max-width:1000rpx; margin:auto; }
+.title { font-size:52rpx; font-weight:700; line-height:1.3; margin:14rpx 0 22rpx; }
+.eyebrow { color:#087f8c; font-size:24rpx; letter-spacing:3rpx; }
+.heading { font-size:34rpx; font-weight:600; margin-bottom:12rpx; }
+.card { background:white; border:1rpx solid #e0ebec; border-radius:26rpx; padding:28rpx; margin:26rpx 0; }
+.muted { color:#637b80; font-size:25rpx; margin:10rpx 0; }
+.label { color:#526d72; margin:22rpx 0 10rpx; font-size:26rpx; }
+input { border:1rpx solid #cfdddf; border-radius:14rpx; padding:18rpx; min-height:48rpx; background:#fafcfc; }
+.row { display:flex; justify-content:space-between; align-items:center; gap:14rpx; margin:14rpx 0; }
+button { margin-top:20rpx; font-size:29rpx; border-radius:16rpx; background:#eaf3f4; color:#176572; }
+button::after { border:none; }
+.primary { background:#087f8c; color:white; }
+.secondary { background:#e6f0f1; color:#176572; }
+.danger { color:#b34432; background:#fff0eb; }
+.error { color:#a92e24; background:#ffede9; padding:22rpx; border-radius:14rpx; margin:20rpx 0; word-break:break-all; }
+.notice { background:#fff4dd; color:#80561e; border-radius:16rpx; padding:22rpx; font-size:25rpx; }
+.warning { color:#a66118; }
+.tag { border-radius:12rpx; padding:6rpx 12rpx; background:#e7f3f2; font-size:23rpx; white-space:nowrap; }
+.link { color:#087f8c; margin-top:18rpx; }
+.map { width:100%; height:520rpx; border-radius:18rpx; margin:22rpx 0; }
+.code { font-size:36rpx; color:#087f8c; word-break:break-all; margin:20rpx 0; }
+.selectable { user-select:text; word-break:break-all; }

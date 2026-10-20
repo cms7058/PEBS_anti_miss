@@ -1,6 +1,6 @@
 # 家人守护 · 第一版开发原型
 
-老人使用 **Android App**，儿女使用 **iPhone App（iOS 17+）**。两端通过同一个后台同步。当前是用于开发联调的原型，尚未完成两部真机的连续守护验收或上架。
+老人使用 **Android App**，儿女使用 **iPhone App（iOS 17+）或微信小程序（苹果/鸿蒙）**，通过同一个后台同步。当前是用于开发联调的原型，尚未完成两部真机的连续守护验收或上架。
 
 2026-10-20 开发验证：Android Debug APK 已成功构建并通过签名校验；iPhone 工程已通过模拟器目标编译并在模拟器启动。具体记录见 [开发验证](docs/VERIFICATION.md)。
 
@@ -72,6 +72,12 @@ xcodebuild -project ios_app_antimiss/ios_app_antimiss.xcodeproj -scheme ios_app_
 ```
 
 源码位于 `ios_app_antimiss/ios_app_antimiss/`，Xcode 工程会自动识别目录内的 Swift 文件。迁移前的工程和模板文件备份在 `build/ios-migration-backup/`，无需运行旧的工程生成脚本。
+
+## 微信小程序管理端
+
+使用微信开发者工具导入 `wechat_app/`，AppID 为 `wx4ce2e3522237bc1d`。当前按 HTTP 内部体验配置，未上传/发布；真机需核实调试模式和平台网络限制。可登录现有 iOS 账号。
+
+已实现位置地图、围栏/目的地地图点选、家属邀请与权限、事件接手；尚无微信后台订阅消息推送。导入、体验版和验收步骤见 [小程序说明](wechat_app/README.md)。鸿蒙原生端暂停，保留现有 iOS App。
 
 ## Android 老人端
 
