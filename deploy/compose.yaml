@@ -5,6 +5,8 @@ services:
     build:
       context: ..
       dockerfile: deploy/Dockerfile
+      args:
+        PACKAGE_INDEX_URL: ${PACKAGE_INDEX_URL:-https://pypi.org/simple}
     restart: unless-stopped
     init: true
     read_only: true

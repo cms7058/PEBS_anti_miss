@@ -84,6 +84,20 @@ git clone https://github.com/cms7058/PEBS_anti_miss.git
 cd PEBS_anti_miss
 ```
 
+## pip 依赖下载或解析失败
+
+如果构建在 `pip install` 阶段失败，先查看完整日志。`ResolutionImpossible` 也可能伴随软件源无法提供依赖的情况，不能仅凭最后一行断定版本冲突。Docker 构建默认使用官方 PyPI，下载超时 60 秒、最多重试 5 次，并在安装后执行 `pip check`。
+
+国内网络访问官方 PyPI 不稳定时，可以明确改用清华镜像，保留 HTTPS 校验：
+
+```sh
+sudo env PACKAGE_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple \
+  docker compose --progress=plain -f deploy/compose.http.yaml build --no-cache backend
+sudo env HTTP_BIND_IP=0.0.0.0 docker compose -f deploy/compose.http.yaml up -d --wait
+```
+
+镜像地址参考[清华镜像站说明](https://mirror.tuna.tsinghua.edu.cn/help/pypi/)。软件源参数只用于构建，不修改服务器全局 pip 配置。若仍失败，保留从 `Looking in indexes` 开始的完整构建日志以便定位。
+
 ## 备份与恢复
 
 使用 SQLite 在线备份，不能直接复制处于 WAL 写入中的单个数据库文件：
