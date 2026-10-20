@@ -1,0 +1,41 @@
+# Temporary HTTP testing. Intentionally bind loopback unless explicitly overridden.
+name: familyguard
+services:
+  backend:
+    image: familyguard-backend:${RELEASE_TAG:-http-test}
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    restart: unless-stopped
+    init: true
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=32m
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    pids_limit: 128
+    mem_limit: 512m
+    stop_grace_period: 40s
+    environment:
+      TRUST_PROXY: "0"
+      APNS_KEY_PATH: ${APNS_KEY_PATH:-}
+      APNS_KEY_ID: ${APNS_KEY_ID:-}
+      APNS_TEAM_ID: ${APNS_TEAM_ID:-}
+      APNS_TOPIC: ${APNS_TOPIC:-com.mingyueacai.ios-app-antimiss}
+      APNS_ENV: ${APNS_ENV:-sandbox}
+    ports:
+      - "${HTTP_BIND_IP:-127.0.0.1}:8087:8087"
+    volumes:
+      - backend_data:/data
+      - ./secrets:/run/secrets:ro
+    healthcheck:
+      test: [CMD, python, -c, "import urllib.request; r=urllib.request.urlopen('http://127.0.0.1:8087/health', timeout=3); assert r.status == 200"]
+      interval: 30s
+      timeout: 5s
+      start_period: 15s
+      retries: 3
+    logging:
+      driver: json-file
+      options: {max-size: "10m", max-file: "3"}
+volumes:
+  backend_data:

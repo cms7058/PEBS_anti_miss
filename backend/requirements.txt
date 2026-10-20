@@ -1,0 +1,3 @@
+# Only required for real Apple push delivery; the API and tests use Python's standard library.
+httpx[http2]>=0.28,<1
+PyJWT[crypto]>=2.10,<3

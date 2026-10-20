@@ -1,0 +1,15 @@
+[Unit]
+Description=Consistent online backup of FamilyGuard SQLite database
+
+[Service]
+Type=oneshot
+User=familyguard
+Group=familyguard
+EnvironmentFile=/etc/familyguard/backend.env
+ExecStart=/opt/familyguard/current/.venv/bin/python /opt/familyguard/current/deploy/backup.py
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/familyguard

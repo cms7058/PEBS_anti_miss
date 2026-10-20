@@ -1,0 +1,30 @@
+{
+    servers {
+        timeouts {
+            read_header 10s
+            read_body 15s
+            write 45s
+            idle 30s
+        }
+    }
+}
+
+# Replace this host with the actual DNS name before installing the configuration.
+{$SITE_ADDRESS:guard.example.com} {
+    request_body {
+        max_size 64KB
+    }
+    header {
+        X-Content-Type-Options nosniff
+        Referrer-Policy no-referrer
+        -Server
+    }
+    reverse_proxy {$UPSTREAM:127.0.0.1:8087} {
+        # Always overwrite any value supplied by an Internet client.
+        header_up X-Real-IP {remote_host}
+        transport http {
+            dial_timeout 5s
+            response_header_timeout 40s
+        }
+    }
+}

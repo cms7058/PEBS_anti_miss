@@ -1,0 +1,33 @@
+[Unit]
+Description=FamilyGuard cloud API and monitor
+Wants=network-online.target
+After=network-online.target
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=familyguard
+Group=familyguard
+WorkingDirectory=/opt/familyguard/current
+EnvironmentFile=/etc/familyguard/backend.env
+ExecStart=/opt/familyguard/current/.venv/bin/gunicorn --config deploy/gunicorn.conf.py backend.wsgi:create_app()
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=40
+StateDirectory=familyguard
+StateDirectoryMode=0700
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/familyguard
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+MemoryMax=512M
+TasksMax=128
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

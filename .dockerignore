@@ -1,0 +1,11 @@
+*
+!backend/
+!backend/__init__.py
+!backend/server.py
+!backend/wsgi.py
+!backend/requirements.txt
+!deploy/
+!deploy/Dockerfile
+!deploy/requirements.txt
+!deploy/gunicorn.conf.py
+!deploy/backup.py
