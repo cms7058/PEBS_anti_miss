@@ -80,7 +80,7 @@ final class NoRedirect: NSObject, URLSessionTaskDelegate {
             case .cannotConnectToHost, .cannotFindHost, .dnsLookupFailed, .timedOut, .networkConnectionLost, .notConnectedToInternet:
                 throw ClientError.message("无法连接后台 \(base)。请确认终端中的后台正在运行，并检查服务地址和端口；模拟器可用 127.0.0.1，真机需要电脑的局域网 IP。")
             case .appTransportSecurityRequiresSecureConnection:
-                throw ClientError.message("当前版本要求 HTTPS。局域网 HTTP 联调请使用 Debug 构建。")
+                throw ClientError.message("系统阻止了 HTTP 连接。测试服务请使用最新 Debug 构建重新安装；正式版本请使用 HTTPS。")
             default:
                 throw failure
             }
