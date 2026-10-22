@@ -47,6 +47,9 @@ final class NoRedirect: NSObject, URLSessionTaskDelegate {
     @Published var selectedID: String?
     @Published var pushStatus = "尚未启用通知"
     @Published var pushConfigured = false
+    @Published var lastRefresh: Date?
+    @Published var refreshFailure: String?
+    private var refreshSequence = 0
     @Published var busy = false
     private var pushToken = ""
     private let network: URLSession = {
@@ -113,9 +116,26 @@ final class NoRedirect: NSObject, URLSessionTaskDelegate {
     }
     func refresh() async throws {
         guard !token.isEmpty else { return }
-        let result: ElderList = try await request("/elders")
-        elders = result.elders
-        if let health: Health = try? await request("/health") { pushConfigured = health.push_configured }
+        let session = token, address = server
+        refreshSequence += 1
+        let sequence = refreshSequence
+        do {
+            let result: ElderList = try await request("/elders")
+            try Task.checkCancellation()
+            guard token == session, server == address, sequence == refreshSequence else { return }
+            elders = result.elders
+            lastRefresh = Date()
+            refreshFailure = nil
+            if let health: Health = try? await request("/health"),
+               token == session, server == address, sequence == refreshSequence {
+                pushConfigured = health.push_configured
+            }
+        } catch {
+            if !Task.isCancelled, token == session, server == address, sequence == refreshSequence {
+                refreshFailure = error.localizedDescription
+            }
+            throw error
+        }
     }
     func enablePush() async {
         do {
@@ -136,7 +156,7 @@ final class NoRedirect: NSObject, URLSessionTaskDelegate {
         if !pushToken.isEmpty { let _: OK = try await request("/push/device", method: "DELETE", body: ["token": pushToken]) }
         let _: OK = try await request("/auth/logout", method: "POST", body: [:])
         try Vault.write("")
-        token = ""; elders = []; selectedID = nil
+        token = ""; elders = []; selectedID = nil; lastRefresh = nil; refreshFailure = nil
         UIApplication.shared.unregisterForRemoteNotifications()
     }
     func save(elder: Elder, settings: GuardSettings) async throws {

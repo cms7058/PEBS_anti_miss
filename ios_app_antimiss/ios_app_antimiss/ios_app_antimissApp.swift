@@ -38,14 +38,13 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
             ContentView()
             .environmentObject(model)
             .tint(Color(red: 0.08, green: 0.42, blue: 0.36))
-            .task(id: scenePhase == .active && !model.token.isEmpty) {
-                if scenePhase == .active && !model.token.isEmpty {
-                    await model.enablePush()
-                    while !Task.isCancelled {
-                        do { try await model.refresh() } catch { model.error = error.localizedDescription; break }
-                        do { try await Task.sleep(for: .seconds(15)) } catch { break }
-                    }
-                }
+            .task(id: scenePhase == .active ? model.token : "") {
+                guard scenePhase == .active, !model.token.isEmpty else { return }
+                await RefreshLoop.run(attempt: { try await model.refresh() }, failure: { _ in })
+            }
+            .task(id: scenePhase == .active ? model.token : "") {
+                guard scenePhase == .active, !model.token.isEmpty else { return }
+                await model.enablePush()
             }
         }
     }

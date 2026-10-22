@@ -73,6 +73,7 @@ struct HomeView: View {
     var body: some View {
         NavigationStack {
             List {
+                Section { DataSyncStatusView() }
                 Section {
                     ForEach(model.elders) { elder in
                         NavigationLink(value: elder.id) {
@@ -163,6 +164,7 @@ struct ElderView: View {
         Group {
             if let elder {
                 List {
+                    Section { DataSyncStatusView() }
                     Section {
                         Map(position: $camera) {
                             if let location = elder.location { Marker(elder.name, systemImage: "person.fill", coordinate: location.coordinate).tint(.teal) }
@@ -171,6 +173,10 @@ struct ElderView: View {
                         }.frame(height: 270).clipShape(RoundedRectangle(cornerRadius: 18))
                         if let loc = elder.location {
                             Text("定位于 \(timeLabel(loc.recorded_at)) · 精度约 \(Int(loc.accuracy)) 米").font(.caption).foregroundStyle(Date().timeIntervalSince1970 - loc.recorded_at > elder.settings.offline_after ? .orange : .secondary)
+                            if Date().timeIntervalSince1970 - loc.recorded_at > elder.settings.offline_after {
+                                Label("此为历史位置，老人端尚未上报新位置", systemImage: "clock.badge.exclamationmark")
+                                    .font(.caption).foregroundStyle(.orange)
+                            }
                             Text("电量 \(Int(loc.battery))% · \(loc.lat.formatted(.number.precision(.fractionLength(5)))), \(loc.lon.formatted(.number.precision(.fractionLength(5))))").font(.caption)
                             Button("在地图中查看此位置") { MKMapItem(placemark: MKPlacemark(coordinate: loc.coordinate)).openInMaps() }
                         } else { Text(elder.paired ? "等待老人手机上传位置" : "等待老人手机绑定") }
@@ -340,6 +346,23 @@ struct MembersView: View {
                     }
                     Button("取消", role: .cancel) { pendingRemoval = nil }
                 }
+        }
+    }
+}
+
+struct DataSyncStatusView: View {
+    @EnvironmentObject var model: AppModel
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            if let refreshed = model.lastRefresh {
+                Text("后台刷新于 \(refreshed.formatted(date: .abbreviated, time: .standard))")
+                    .font(.caption).foregroundStyle(.secondary)
+            } else { Text("正在读取后台数据…").font(.caption).foregroundStyle(.secondary) }
+            if let failure = model.refreshFailure {
+                Text("刷新失败，将自动重试：\(failure)").font(.caption).foregroundStyle(.orange)
+            }
+            Button("立即刷新后台数据") { Task { await model.perform { try await model.refresh() } } }
+                .disabled(model.busy)
         }
     }
 }

@@ -30,7 +30,11 @@ class MainActivity : Activity() {
         }
     }
     override fun onCreate(savedInstanceState: Bundle?) { super.onCreate(savedInstanceState); render() }
-    override fun onResume() { super.onResume(); handler.post(update) }
+    override fun onResume() {
+        super.onResume(); handler.post(update)
+        if (prefs.getBoolean("tracking_enabled", false) && !prefs.getString("token", "").isNullOrEmpty() &&
+            checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED) launchTracking()
+    }
     override fun onPause() { super.onPause(); handler.removeCallbacks(update) }
     private fun text(value: String, size: Float = 20f): TextView = TextView(this).apply {
         text = value; textSize = size; setTextColor(Color.rgb(28, 48, 49)); setPadding(0, 16, 0, 16)
@@ -69,14 +73,18 @@ class MainActivity : Activity() {
             button("开始守护") { startTracking() }
             button("停止位置共享") {
                 AlertDialog.Builder(this).setTitle("停止守护？").setMessage("停止后家属将无法获得新位置，并可能收到位置未更新提醒。").setPositiveButton("停止") { _, _ ->
+                    prefs.edit().putBoolean("tracking_enabled", false).commit()
                     stopService(Intent(this, TrackingService::class.java))
                     prefs.edit().putString("status", "位置共享已停止").apply(); status.text = "位置共享已停止"
                 }.setNegativeButton("继续守护", null).show()
             }
             button("打开应用设置") { startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$packageName"))) }
-            content.addView(text("首次开启时，请允许精确定位和通知；若系统限制后台运行，请在应用设置中允许后台活动。重启手机后请重新打开并开始守护。", 18f))
+            button("打开系统定位设置") { startActivity(Intent(Settings.ACTION_LOCATION_SOURCE_SETTINGS)) }
+            button("打开电池优化设置") { startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)) }
+            content.addView(text("开启一次后可返回桌面、锁屏，常驻通知表示后台守护运行中。请允许精确定位、通知，并在手机应用启动管理中允许自启动、关联启动和后台活动，在电池优化中允许本应用。普通系统回收会尝试恢复；手动停止后不会恢复。重启或强制停止后需重新打开应用。", 18f))
             button("解除与家属的绑定") {
                 AlertDialog.Builder(this).setTitle("解除绑定？").setMessage("解除后已授权的家属无法继续取得本机新位置。").setPositiveButton("解除") { _, _ ->
+                    prefs.edit().putBoolean("tracking_enabled", false).commit()
                     stopService(Intent(this, TrackingService::class.java))
                     worker.execute {
                         try {
@@ -98,15 +106,23 @@ class MainActivity : Activity() {
             requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 11)
             return
         }
-        startForegroundService(Intent(this, TrackingService::class.java))
-        status.text = "正在启动定位…"
+        launchTracking()
+    }
+    private fun launchTracking() {
+        prefs.edit().putBoolean("tracking_enabled", true).commit()
+        try {
+            startForegroundService(Intent(this, TrackingService::class.java))
+            status.text = "正在启动后台守护…"
+        } catch (e: Exception) {
+            val message = "系统未允许启动守护：${e.message ?: "请检查应用权限和后台活动设置"}"
+            prefs.edit().putString("status", message).apply(); status.text = message
+        }
     }
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
         if (requestCode == 10 && checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED) startTracking()
         else if (requestCode == 11) {
-            startForegroundService(Intent(this, TrackingService::class.java))
-            status.text = "正在启动定位；请在设置中允许通知，以便查看守护状态"
+            launchTracking()
         } else status.text = "需要精确定位权限才能开始守护"
     }
 }
