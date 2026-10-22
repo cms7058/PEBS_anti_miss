@@ -222,8 +222,14 @@ class Store:
             return {"token": session, "user_id": uid, "name": name}
         if method == "POST" and path == "/device/pair":
             require(data.get("consent") is True, "需在老人手机上确认位置共享")
-            elder = self.one("SELECT * FROM elders WHERE pair_code=? AND pair_expires>? AND consent=0", (data.get("code"), now))
+            elder = self.one("SELECT * FROM elders WHERE pair_code=? AND pair_expires>?", (data.get("code"), now))
             require(elder, "绑定码无效或已过期", 404)
+            # Commit the replacement only after fresh on-device consent. Issuing a code
+            # leaves the currently paired phone usable until this transaction succeeds.
+            self.db.execute("DELETE FROM elder_push_devices WHERE elder_id=?", (elder["id"],))
+            self.db.execute("DELETE FROM elder_outbox WHERE elder_id=?", (elder["id"],))
+            self.db.execute("DELETE FROM location_requests WHERE elder_id=?", (elder["id"],))
+            self.db.execute("UPDATE events SET active=0 WHERE elder_id=?", (elder["id"],))
             device_token = secrets.token_urlsafe(32)
             self.db.execute("UPDATE elders SET consent=1,device_token=?,pair_code=NULL,created=?,last_location=NULL,last_seen=NULL,outside_since=NULL,outside_count=0,applied_version=0 WHERE id=?", (digest(device_token), now, elder["id"]))
             return {"token": device_token, "elder_id": elder["id"], "name": elder["name"]}
@@ -352,7 +358,9 @@ class Store:
             return pending
         if action == "pair-code" and method == "POST":
             elder = self.access(eid, uid, owner=True)
-            require(not elder["consent"], "设备已绑定，请先在老人手机解除共享", 409)
+            require(type(data.get("replace", False)) is bool, "重新绑定参数无效")
+            require(not elder["consent"] or data.get("replace") is True,
+                    "设备已绑定，请使用重新绑定入口", 409)
             code = secrets.token_hex(5).upper()
             self.db.execute("UPDATE elders SET pair_code=?,pair_expires=? WHERE id=?", (code, now + 900, eid))
             return {"code": code, "expires": now + 900}

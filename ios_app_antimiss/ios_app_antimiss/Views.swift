@@ -158,6 +158,7 @@ struct ElderView: View {
     @State private var edit: String?
     @State private var members = false
     @State private var pairCode: String?
+    @State private var confirmRebind = false
     @State private var camera: MapCameraPosition = .automatic
     var elder: Elder? { model.elders.first { $0.id == id } }
     var body: some View {
@@ -207,7 +208,10 @@ struct ElderView: View {
                         }
                         if elder.is_owner {
                             Button("管理授权人员") { members = true }
-                            if !elder.paired { Button("获取老人手机绑定码") { Task { await model.perform { let result: CodeResponse = try await model.request("/elders/\(id)/pair-code", method: "POST", body: [:]); pairCode = result.code } } } }
+                            Button(elder.paired ? "重新绑定老人手机" : "获取老人手机绑定码") {
+                                if elder.paired { confirmRebind = true }
+                                else { generatePairCode(replace: false) }
+                            }.disabled(model.busy)
                         }
                     }
                     Section("异常提醒") {
@@ -230,9 +234,21 @@ struct ElderView: View {
                     .refreshable { do { try await model.refresh() } catch { model.error = error.localizedDescription } }
                     .sheet(item: Binding(get: { edit.map { Selection(id: $0) } }, set: { edit = $0?.id })) { mode in PlaceEditor(elder: elder, mode: mode.id) }
                     .sheet(isPresented: $members) { MembersView(id: id) }
-                    .sheet(isPresented: Binding(get: { pairCode != nil }, set: { if !$0 { pairCode = nil } })) { CodeView(title: "老人手机绑定码", code: pairCode ?? "", detail: "有效期 15 分钟，请在老人手机输入并确认。") }
+                    .confirmationDialog("重新绑定这位老人的手机？", isPresented: $confirmRebind, titleVisibility: .visible) {
+                        Button("生成重新绑定码") { generatePairCode(replace: true) }
+                        Button("取消", role: .cancel) { }
+                    } message: {
+                        Text("适用于重装应用或更换手机。生成口令后旧设备仍可使用；新手机输入口令并确认后，旧设备失效。已有围栏、行程和家属授权保留。")
+                    }
+                    .sheet(isPresented: Binding(get: { pairCode != nil }, set: { if !$0 { pairCode = nil } })) { CodeView(title: "老人手机绑定码", code: pairCode ?? "", detail: "有效期 15 分钟，请在老人手机输入并确认。重新绑定成功后旧设备失效，已有守护设置保留。") }
             } else { ContentUnavailableView("无法查看此家人", systemImage: "person.slash", description: Text("请刷新或确认管理授权。")) }
         }
+    }
+    private func generatePairCode(replace: Bool) {
+        Task { await model.perform {
+            let result: CodeResponse = try await model.request("/elders/\(id)/pair-code", method: "POST", body: ["replace": replace])
+            pairCode = result.code
+        } }
     }
     func deliveryText(_ delivery: [Delivery]) -> String {
         if delivery.contains(where: { $0.state == "accepted" }) { return "苹果推送服务已接受通知，是否展示取决于手机状态与通知设置" }

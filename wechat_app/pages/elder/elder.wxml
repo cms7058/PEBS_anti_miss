@@ -13,7 +13,7 @@
    <view class="muted">{{elder.modeLabel}}</view>
    <view class="muted">请求老人手机重新定位。需新版老人端开启守护，锁屏休眠可能延迟；刷新后台数据只读取已上报位置。</view>
   </view>
-  <view class="card" wx:if="{{elder.is_owner && !elder.paired}}"><view class="heading">绑定老人端</view><button bindtap="pair" disabled="{{busy}}">生成新的绑定码</button><view class="code selectable">{{code}}</view><view wx:if="{{code}}" class="muted">有效期至 {{expires}}</view><button wx:if="{{code}}" bindtap="copy">复制绑定码</button></view>
+  <view class="card" wx:if="{{elder.is_owner}}"><view class="heading">绑定老人端</view><button bindtap="pair" disabled="{{busy}}">{{elder.paired ? '重新绑定老人手机' : '生成新的绑定码'}}</button><view class="code selectable">{{code}}</view><view wx:if="{{code}}" class="muted">有效期至 {{expires}}</view><button wx:if="{{code}}" bindtap="copy">复制绑定码</button></view>
   <view class="card"><view class="heading">守护设置</view>
    <view>{{elder.settings.fence ? '已启用日常围栏' : '尚未设置日常围栏'}}</view>
    <view wx:if="{{elder.settings.trip}}">目的地：{{elder.settings.trip.name}} · {{elder.settings.trip.status === 'arrived' ? '已到达，等待结束行程' : '行程进行中'}}</view>

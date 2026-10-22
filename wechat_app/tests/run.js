@@ -74,6 +74,8 @@ async function main(){
  await new Promise(resolve=>{queue.push(resolve);backend.stdin.write(JSON.stringify({advance:181})+'\n');});
  await detail.load();assert.equal(detail.data.elder.location_request.state,'expired');
  assert.equal(detail.data.elder.requestWaiting,false);assert.match(detail.data.elder.requestLabel,/超时/);
+ await detail.pair();assert.equal(detail.data.error,'');
+ assert.ok(detail.data.code.length>=10);assert.ok(detail.data.expires);
  detail.stop();
  const invite=await api.request(api.elderPath(eid,'/invites'),'POST',{can_edit:false});
  await api.login('mini-viewer','viewer password 123',true);await api.request('/invites/accept','POST',{code:invite.code});

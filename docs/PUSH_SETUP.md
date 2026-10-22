@@ -45,3 +45,18 @@ MasterSecret仅给后端使用，AppSecret在当前接入中不需要。两个Co
 - https://docs.getui.com/getui/server/rest_v2/standard/
 - https://docs.getui.com/getui/server/rest_v2/token/
 - https://docs.getui.com/getui/server/rest_v2/push/
+
+## 重装老人端或更换手机
+
+成功使用过的绑定码会作废，不提供历史口令查询。需要重新绑定时，主管理员打开原有老人详情，点击“重新绑定老人手机”，确认后显示有效15分钟的新口令；新手机输入并确认共享后，旧设备令牌、推送通道和待处理定位指令会失效，围栏、行程及家属授权保留。不要重复添加老人。
+
+这次需同时升级后端与iOS/小程序管理端，老人端0.1.3无需为此再次重装。生成口令不立即断开旧设备，取消或过期不会影响旧设备。只有主管理员能生成替换口令。
+
+如果云服务器不能访问GitHub，可上传本地生成的`PEBS_anti_miss-main.bundle`到`/home/ubuntu/`，在项目目录执行：
+
+```sh
+git pull --ff-only /home/ubuntu/PEBS_anti_miss-main.bundle main
+sudo env HTTP_BIND_IP=0.0.0.0 docker compose -f deploy/compose.http.yaml up -d --build --wait
+```
+
+离线Git包包含提交历史和源代码，不包含本地未跟踪的密钥或数据库。服务器的getui.env仍需单独配置。

@@ -116,6 +116,51 @@ class SafetyFlowTests(unittest.TestCase):
         with self.assertRaises(APIError):
             self.call("POST", "/device/pair", {"code": item["code"], "consent": True}, "")
 
+    def rebind_code(self, token=None):
+        return self.call("POST", f"/elders/{self.eid}/pair-code", {"replace": True}, token)["code"]
+
+    def test_rebind_keeps_old_device_until_new_consent_then_revokes_it(self):
+        self.invite(True)
+        self.settings(fence={"lat": 31, "lon": 121, "radius": 500})
+        self.upload()
+        self.request_location()
+        code = self.rebind_code()
+        self.assertEqual(self.call("GET", "/device/settings", token=self.device)["version"], 1)
+        with self.assertRaises(APIError):
+            self.call("POST", "/device/pair", {"code": code, "consent": False}, "")
+        self.assertTrue(self.elder()["paired"])
+        paired = self.call("POST", "/device/pair", {"code": code, "consent": True}, "")
+        with self.assertRaises(APIError): self.call("GET", "/device/commands", token=self.device)
+        settings = self.call("GET", "/device/settings", token=paired["token"])
+        self.assertEqual(settings["settings"]["fence"]["radius"], 500)
+        self.assertEqual(len(self.elder()["members"]), 1)
+        self.assertIsNone(self.elder()["location_request"])
+        self.assertFalse(self.s.rows("SELECT * FROM elder_outbox"))
+        with self.assertRaises(APIError):
+            self.call("POST", "/device/pair", {"code": code, "consent": True}, "")
+
+    def test_rebind_is_owner_only_and_requires_explicit_replacement(self):
+        self.invite(True)
+        for token in (self.other, self.stranger):
+            with self.assertRaises(APIError) as ctx: self.rebind_code(token)
+            self.assertEqual(ctx.exception.status, 403)
+        with self.assertRaises(APIError) as ctx:
+            self.call("POST", f"/elders/{self.eid}/pair-code")
+        self.assertEqual(ctx.exception.status, 409)
+        self.assertTrue(self.call("GET", "/device/settings", token=self.device))
+
+    def test_expired_rebind_code_does_not_disconnect_current_device(self):
+        code = self.rebind_code()
+        self.now += 901
+        with self.assertRaises(APIError):
+            self.call("POST", "/device/pair", {"code": code, "consent": True}, "")
+        self.assertTrue(self.call("GET", "/device/settings", token=self.device))
+        first = self.rebind_code()
+        second = self.rebind_code()
+        self.assertNotEqual(first, second)
+        with self.assertRaises(APIError):
+            self.call("POST", "/device/pair", {"code": first, "consent": True}, "")
+
     def test_expired_pair_and_session(self):
         item = self.call("POST", "/elders", {"name": "爸爸"})
         self.now += 901

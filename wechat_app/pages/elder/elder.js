@@ -14,7 +14,10 @@ Page({
  locate(){return ui.run(this,async()=>{
    await api.request(api.elderPath(this.id,'/location-request'),'POST',{});await this.load();
  });},
- pair(){return ui.run(this,async()=>{const result=await api.request(api.elderPath(this.id,'/pair-code'),'POST',{});
+ pair(){return ui.run(this,async()=>{
+   const replace=!!this.data.elder.paired;
+   if(replace&&!await ui.confirm('重新绑定适用于重装应用或更换手机。新手机输入口令并确认后旧设备失效，已有围栏、行程及家属授权保留。是否生成口令？'))return;
+   const result=await api.request(api.elderPath(this.id,'/pair-code'),'POST',{replace});
    this.setData({code:result.code,expires:model.time(result.expires)});});},
  copy(){ui.copy(this.data.code);},
  settings(e){wx.navigateTo({url:`/pages/settings/settings?id=${encodeURIComponent(this.id)}&mode=${e.currentTarget.dataset.mode}`});},

@@ -99,6 +99,19 @@ class ElderPushTests(unittest.TestCase):
         self.register()
         self.assertEqual(self.s.one("SELECT state FROM elder_outbox")["state"], "received")
 
+    def test_rebinding_removes_old_push_identity(self):
+        self.register()
+        code = self.call("POST", f"/elders/{self.eid}/pair-code", {"replace": True})["code"]
+        self.assertTrue(self.s.rows("SELECT * FROM elder_push_devices"))
+        paired = self.call("POST", "/device/pair", {"code": code, "consent": True})
+        self.assertFalse(self.s.rows("SELECT * FROM elder_push_devices"))
+        self.assertFalse(self.s.rows("SELECT * FROM elder_outbox"))
+        self.worker.run_once()
+        self.client.send.assert_not_called()
+        self.device = paired["token"]
+        self.register()
+        self.assertTrue(self.s.rows("SELECT * FROM elder_push_devices"))
+
     def test_api_authentication_and_signal_has_no_location_or_credentials(self):
         client = GetuiClient()
         results = [{"code": 0, "data": {"token": "test-token", "expire_time": "9999999999999"}}, {"code": 0}]
