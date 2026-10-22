@@ -182,7 +182,7 @@ struct ElderView: View {
                             Text("电量 \(Int(loc.battery))% · \(loc.lat.formatted(.number.precision(.fractionLength(5)))), \(loc.lon.formatted(.number.precision(.fractionLength(5))))").font(.caption)
                             Button("在地图中查看此位置") { MKMapItem(placemark: MKPlacemark(coordinate: loc.coordinate)).openInMaps() }
                         } else { Text(elder.paired ? "等待老人手机上传位置" : "等待老人手机绑定") }
-                        Text(elder.settings.automatic ? "围栏／行程自动守护中：本页自动显示手机已上报的位置" : "按需查询模式：本页显示上次位置，点击获取才请求采集")
+                        Text(elder.settings.automatic ? "围栏／行程自动守护中：老人手机继续上报，本页点击刷新后更新" : "按需查询模式：本页显示上次位置，点击获取才请求采集")
                             .font(.caption).foregroundStyle(.secondary)
                         RemoteLocationView(elder: elder)
                         if elder.version != elder.applied_version { Label("设置已保存，等待老人手机同步", systemImage: "arrow.triangle.2.circlepath").foregroundStyle(.orange) }
@@ -400,8 +400,10 @@ struct DataSyncStatusView: View {
                     .font(.caption).foregroundStyle(.secondary)
             } else { Text("正在读取后台数据…").font(.caption).foregroundStyle(.secondary) }
             if let failure = model.refreshFailure {
-                Text("刷新失败，将自动重试：\(failure)").font(.caption).foregroundStyle(.orange)
+                Text("刷新失败，请点击重试：\(failure)").font(.caption).foregroundStyle(.orange)
             }
+            Text("页面数据为上次读取的快照，不定时刷新位置和电量。")
+                .font(.caption).foregroundStyle(.secondary)
             Button("立即刷新后台数据") { Task { await model.perform { try await model.refresh() } } }
                 .disabled(model.busy)
         }
@@ -411,20 +413,38 @@ struct DataSyncStatusView: View {
 struct RemoteLocationView: View {
     @EnvironmentObject var model: AppModel
     let elder: Elder
+    @State private var requestedID: String?
     var body: some View {
         Button(elder.positionRequestTitle) {
             Task { await model.perform {
-                let _: LocationRequest = try await model.request("/elders/\(elder.id)/location-request", method: "POST", body: [:])
+                let result: LocationRequest = try await model.request("/elders/\(elder.id)/location-request", method: "POST", body: [:])
                 try await model.refresh()
+                requestedID = result.id
             } }
         }.disabled(model.busy || !elder.canRequestPosition || elder.location_request?.waiting == true)
         if let label = elder.positionRequestLabel {
             Text(label).font(.caption).foregroundStyle(.secondary)
         }
-        if let transport = elder.elder_push {
-            Text(transport.label).font(.caption).foregroundStyle(.orange)
+        if let status = elder.pushDescription {
+            Text(status).font(.caption).foregroundStyle(.orange)
         }
-        Text("通过推送请求老人手机重新定位，需新版老人端开启守护。无围栏或进行中的行程时不自动定位；刷新后台数据只读取已有位置。")
+        if let diag = elder.device_diagnostics {
+            Text("老人端版本 \(diag.app_version) · 状态上报于 \(timeLabel(diag.updated_at))")
+                .font(.caption).foregroundStyle(.secondary)
+        }
+        Text("主动查询期间会等待返回结果；平时请点刷新读取服务器快照。老人端需开启守护，无规则时不自动定位。")
             .font(.caption).foregroundStyle(.secondary)
+            .task(id: requestedID) {
+                guard let id = requestedID else { return }
+                // Bounded polling only for the query explicitly started in this view.
+                for _ in 0..<40 {
+                    guard let request = model.elders.first(where: { $0.id == elder.id })?.location_request,
+                          request.id == id, request.waiting else { return }
+                    do { try await Task.sleep(for: .seconds(5)); try Task.checkCancellation() }
+                    catch { return }
+                    do { try await model.refresh() }
+                    catch { if Task.isCancelled { return } }
+                }
+            }
     }
 }

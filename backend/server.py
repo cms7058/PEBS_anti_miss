@@ -79,6 +79,8 @@ class Store:
           PRIMARY KEY(elder_id,kind));
         CREATE TABLE IF NOT EXISTS location_requests(elder_id TEXT PRIMARY KEY REFERENCES elders(id),
           id TEXT, requested_at REAL, expires REAL, state TEXT, completed_at REAL, completion_source TEXT);
+        CREATE TABLE IF NOT EXISTS elder_diagnostics(elder_id TEXT PRIMARY KEY REFERENCES elders(id),
+          app_version TEXT,push_consent INTEGER,cid_available INTEGER,sdk_online INTEGER,registration_state TEXT,updated_at REAL);
         CREATE TABLE IF NOT EXISTS elder_push_devices(elder_id TEXT PRIMARY KEY REFERENCES elders(id), cid TEXT UNIQUE, app_id TEXT);
         CREATE TABLE IF NOT EXISTS elder_outbox(elder_id TEXT REFERENCES elders(id), kind TEXT,
           generation TEXT, expires REAL, state TEXT, attempts INTEGER DEFAULT 0,
@@ -148,6 +150,11 @@ class Store:
         result["settings"] = json.loads(elder["settings"])
         result["location_request"] = self.location_request(elder["id"])
         result["elder_push"] = self.elder_push_status(elder["id"])
+        diag = self.one("SELECT app_version,push_consent,cid_available,sdk_online,registration_state,updated_at FROM elder_diagnostics WHERE elder_id=?", (elder["id"],))
+        if diag:
+            for key in ("push_consent", "cid_available", "sdk_online"):
+                diag[key] = bool(diag[key]) if diag[key] is not None else None
+        result["device_diagnostics"] = diag
         result["paired"] = bool(elder["consent"])
         result["is_owner"] = elder["owner"] == uid
         member = self.one("SELECT can_edit FROM members WHERE elder_id=? AND user_id=?", (elder["id"], uid))
@@ -234,6 +241,7 @@ class Store:
             require(elder, "绑定码无效或已过期", 404)
             # Commit the replacement only after fresh on-device consent. Issuing a code
             # leaves the currently paired phone usable until this transaction succeeds.
+            self.db.execute("DELETE FROM elder_diagnostics WHERE elder_id=?", (elder["id"],))
             self.db.execute("DELETE FROM muted_incidents WHERE elder_id=?", (elder["id"],))
             self.db.execute("DELETE FROM elder_push_devices WHERE elder_id=?", (elder["id"],))
             self.db.execute("DELETE FROM elder_outbox WHERE elder_id=?", (elder["id"],))
@@ -245,6 +253,18 @@ class Store:
         if path.startswith("/device/"):
             elder = self.one("SELECT * FROM elders WHERE device_token=? AND consent=1", (digest(token),))
             require(elder, "设备尚未绑定", 401)
+            if method == "POST" and path == "/device/diagnostics":
+                version = data.get("app_version")
+                require(isinstance(version, str) and re.fullmatch(r"[A-Za-z0-9._-]{1,30}", version), "应用版本格式错误")
+                require(type(data.get("push_consent")) is bool and type(data.get("cid_available")) is bool, "推送状态格式错误")
+                online = data.get("sdk_online")
+                require(online is None or type(online) is bool, "SDK连接状态格式错误")
+                state = data.get("registration_state")
+                require(state in ("waiting_cid", "waiting_registration", "registered", "registration_failed", "initialization_failed", "disabled"), "登记状态格式错误")
+                self.db.execute("INSERT OR REPLACE INTO elder_diagnostics VALUES(?,?,?,?,?,?,?)",
+                                (elder["id"], version, int(data["push_consent"]), int(data["cid_available"]),
+                                 int(online) if online is not None else None, state, now))
+                return {"ok": True}
             if method == "POST" and path == "/device/push":
                 if data.get("enabled") is False:
                     self.db.execute("DELETE FROM elder_push_devices WHERE elder_id=?", (elder["id"],))
@@ -275,6 +295,7 @@ class Store:
             if method == "GET" and path == "/device/settings":
                 return {"version": elder["version"], "settings": json.loads(elder["settings"])}
             if method == "POST" and path == "/device/unpair":
+                self.db.execute("DELETE FROM elder_diagnostics WHERE elder_id=?", (elder["id"],))
                 self.db.execute("DELETE FROM elder_push_devices WHERE elder_id=?", (elder["id"],))
                 self.db.execute("DELETE FROM elder_outbox WHERE elder_id=?", (elder["id"],))
                 self.db.execute("DELETE FROM location_requests WHERE elder_id=?", (elder["id"],))

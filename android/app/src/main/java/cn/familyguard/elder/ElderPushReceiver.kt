@@ -22,13 +22,13 @@ class ElderPushReceiver : GTIntentService() {
     override fun onReceiveClientId(context: Context, clientid: String) {
         if (!allowed(context)) return
         context.getSharedPreferences("guard", Context.MODE_PRIVATE).edit()
-            .putString("push_cid", clientid).putString("push_status", "已取得推送标识，正在登记").apply()
+            .putString("push_cid", clientid).putString("push_registration", "waiting_registration").putString("push_status", "已取得推送标识，正在登记").apply()
         TrackingService.signal()
     }
     override fun onReceiveOnlineState(context: Context, online: Boolean) {
         if (!allowed(context)) return
         context.getSharedPreferences("guard", Context.MODE_PRIVATE).edit()
-            .putString("push_status", if (online) "推送通道已连接" else "推送通道断开，等待SDK重连").apply()
+            .putBoolean("push_online", online).putString("push_status", if (online) "推送通道已连接" else "推送通道断开，等待SDK重连").apply()
         if (online) TrackingService.signal()
     }
     override fun onReceiveMessageData(context: Context, message: GTTransmitMessage) {

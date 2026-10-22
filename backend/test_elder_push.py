@@ -112,6 +112,21 @@ class ElderPushTests(unittest.TestCase):
         self.register()
         self.assertTrue(self.s.rows("SELECT * FROM elder_push_devices"))
 
+    def test_device_diagnostics_are_authenticated_and_scoped(self):
+        data={"app_version":"0.1.4","push_consent":True,"cid_available":False,"registration_state":"waiting_cid"}
+        with self.assertRaises(APIError): self.call("POST","/device/diagnostics",data)
+        self.call("POST","/device/diagnostics",data,self.device)
+        diag=self.call("GET",f"/elders/{self.eid}")["device_diagnostics"]
+        self.assertEqual(diag["app_version"],"0.1.4")
+        self.assertIs(diag["push_consent"],True)
+        self.assertIs(diag["cid_available"],False)
+        self.assertIsNone(diag["sdk_online"])
+        for invalid in ({"app_version":"x"*50},{"sdk_online":1},{"registration_state":"unknown"}):
+            with self.assertRaises(APIError): self.call("POST","/device/diagnostics",dict(data,**invalid),self.device)
+        self.call("POST","/device/diagnostics",dict(data,registration_state="initialization_failed"),self.device)
+        self.call("POST","/device/unpair",token=self.device)
+        self.assertIsNone(self.call("GET",f"/elders/{self.eid}")["device_diagnostics"])
+
     def test_api_authentication_and_signal_has_no_location_or_credentials(self):
         client = GetuiClient()
         results = [{"code": 0, "data": {"token": "test-token", "expire_time": "9999999999999"}}, {"code": 0}]

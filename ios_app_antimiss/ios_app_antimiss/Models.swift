@@ -55,7 +55,7 @@ struct ElderPushStatus: Codable {
     let settings_delivery: ElderPushDelivery?
     var label: String {
         if !configured { return "老人端推送尚未配置，远程请求暂不能主动送达" }
-        if !registered { return "老人手机尚未登记推送，请安装新版并开启守护" }
+        if !registered { return "尚未收到这台手机的推送登记，请检查老人端的版本及推送状态" }
         switch location_delivery?.state {
         case "failed": return "推送发送失败，请检查服务器配置或稍后重试"
         case "accepted": return "个推已接受指令，等待手机接收"
@@ -81,9 +81,18 @@ struct LocationRequest: Codable {
         }
     }
 }
+struct DeviceDiagnostics: Codable {
+    let app_version: String
+    let push_consent: Bool
+    let cid_available: Bool
+    let sdk_online: Bool?
+    let registration_state: String
+    let updated_at: Double
+}
 struct Elder: Codable, Identifiable {
     let id: String
     let name: String
+    let device_diagnostics: DeviceDiagnostics?
     let elder_push: ElderPushStatus?
     let location_request: LocationRequest?
     let paired: Bool
@@ -98,6 +107,17 @@ struct Elder: Codable, Identifiable {
     let events: [GuardEvent]
 }
 extension Elder {
+    var pushDescription: String? {
+        guard let transport = elder_push else { return nil }
+        if !transport.configured { return transport.label }
+        if let diag = device_diagnostics, !transport.registered {
+            if !diag.push_consent { return "老人端尚未同意启用推送，请在老人手机上开启守护" }
+            if !diag.cid_available { return "老人端 \(diag.app_version)：SDK尚未取得推送标识，请检查老人手机网络或重试推送登记" }
+            return "老人端 \(diag.app_version)：已取得标识，但服务器登记未完成，请在老人端查看失败原因"
+        }
+        if transport.registered && device_diagnostics?.sdk_online == false { return "推送已登记，但最近一次SDK连接状态为离线（请刷新查看最新状态）" }
+        return transport.label
+    }
     var canRequestPosition: Bool { paired && (settings.automatic || elder_push == nil || (elder_push!.configured && elder_push!.registered)) }
     var positionRequestTitle: String {
         if settings.automatic && !(elder_push?.configured == true && elder_push?.registered == true) { return "等待下一次自动位置" }

@@ -6,7 +6,7 @@
   <view class="card">
    <view class="heading">最近上报位置</view><view class="{{elder.stale ? 'warning' : 'muted'}}">{{elder.lastLabel}}</view><view>{{elder.accuracyLabel}}</view>
    <map wx:if="{{hasMap}}" class="map" latitude="{{mapCenter.lat}}" longitude="{{mapCenter.lon}}" markers="{{markers}}" circles="{{circles}}" scale="14"/>
-   <view class="muted selectable">{{elder.coordinateLabel}}</view><view class="muted">页面刷新：{{lastRefresh}}。页面打开期间约每 15 秒刷新。</view><button bindtap="refresh" disabled="{{busy}}">刷新后台数据</button>
+   <view class="muted selectable">{{elder.coordinateLabel}}</view><view class="muted">页面刷新：{{lastRefresh}}。平时不定时刷新，点击按钮读取最新快照。</view><button bindtap="refresh" disabled="{{busy}}">刷新后台数据</button>
    <button bindtap="locate" disabled="{{busy || !elder.canRequestPosition || elder.requestWaiting}}">{{elder.requestTitle}}</button>
    <view class="muted">{{elder.requestLabel}}</view>
    <view class="muted">{{elder.pushLabel}}</view>

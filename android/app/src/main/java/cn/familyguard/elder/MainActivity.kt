@@ -47,7 +47,7 @@ class MainActivity : Activity() {
         content = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(32, 48, 32, 32); setBackgroundColor(Color.rgb(245, 248, 245)) }
         setContentView(ScrollView(this).apply { addView(content) })
         content.addView(text("家人守护", 34f))
-        content.addView(text("出门安心，家人放心", 21f))
+        content.addView(text("出门安心，家人放心 · 版本 ${BuildConfig.VERSION_NAME}", 21f))
         status = text(prefs.getString("status", "尚未开始守护")!!, 24f)
         content.addView(status)
         if (prefs.getString("token", "").isNullOrEmpty()) {
@@ -73,6 +73,7 @@ class MainActivity : Activity() {
             content.addView(text("使用者：" + prefs.getString("name", "老人")))
             button("个推隐私说明") { startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://docs.getui.com/privacy"))) }
             button("开始守护") { startTracking() }
+            button("重试推送登记") { startTracking() }
             button("停止位置共享") {
                 AlertDialog.Builder(this).setTitle("停止守护？").setMessage("停止后家属将无法获得新位置，并可能收到位置未更新提醒。").setPositiveButton("停止") { _, _ ->
                     prefs.edit().putBoolean("tracking_enabled", false).commit()
@@ -124,9 +125,7 @@ class MainActivity : Activity() {
         prefs.edit().putBoolean("tracking_enabled", true).commit()
         try {
             startForegroundService(Intent(this, TrackingService::class.java))
-            PushManager.getInstance().initialize(applicationContext)
-            PushManager.getInstance().turnOnPush(applicationContext)
-            PushManager.getInstance().getClientid(applicationContext)?.let { prefs.edit().putString("push_cid", it).apply() }
+            ElderPushRuntime.start(this)
             status.text = "正在启动后台守护及推送…"
         } catch (e: Exception) {
             val message = "系统未允许启动守护：${e.message ?: "请检查应用权限和后台活动设置"}"

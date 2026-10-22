@@ -16,10 +16,15 @@ function decorate(elder) {
     else if(waiting && automatic) requestLabel='等待请求后的新位置，自动守护上报也可满足本次查询';
     else if(waiting && !canRequestPosition) requestLabel='远程定位通道不可用，暂未能向老人手机发送请求';
   }
+  let pushLabel=!elder.elder_push ? '' : !elder.elder_push.configured ? '老人端推送尚未配置，远程请求暂不能主动送达' : !elder.elder_push.registered ? '尚未收到这台手机的推送登记，请检查老人端的版本及推送状态' : elder.elder_push.location_delivery && elder.elder_push.location_delivery.state === 'failed' ? '推送发送失败，请检查服务器配置' : '老人端推送已配置，手机休眠或服务停止可能影响响应';
+  const diag=elder.device_diagnostics;
+  if(diag && elder.elder_push && elder.elder_push.configured && !elder.elder_push.registered) {
+    pushLabel=!diag.push_consent?'老人端尚未同意启用推送，请在老人手机上开启守护':!diag.cid_available?`老人端 ${diag.app_version}：SDK尚未取得标识，请检查手机网络或重试推送登记`:`老人端 ${diag.app_version}：已取得标识，但服务器登记未完成，请查看老人端失败原因`;
+  }
   return Object.assign({}, elder, {
     requestWaiting: waiting, requestLabel, canRequestPosition, requestTitle: automatic && !pushReady ? '等待下一次自动位置' : '获取最新位置',
     modeLabel: elder.settings.fence || (elder.settings.trip && elder.settings.trip.status==='active') ? '自动守护：围栏或行程期间定时定位' : '按需查询：不自动定位，点击获取最新位置时请求采集',
-    pushLabel: !elder.elder_push ? '' : !elder.elder_push.configured ? '老人端推送尚未配置，远程请求暂不能主动送达' : !elder.elder_push.registered ? '老人手机尚未登记推送，请安装新版并开启守护' : elder.elder_push.location_delivery && elder.elder_push.location_delivery.state === 'failed' ? '推送发送失败，请检查服务器配置' : '老人端推送已配置，手机休眠或服务停止可能影响响应',
+    pushLabel,
     settingsPushFailed: !!(elder.elder_push && elder.elder_push.settings_delivery && elder.elder_push.settings_delivery.state === 'failed'),
     lastLabel: p ? time(p.recorded_at) : '尚未收到位置，请在老人端开启守护',
     stale: !p || Date.now()/1000-p.recorded_at > elder.settings.offline_after,

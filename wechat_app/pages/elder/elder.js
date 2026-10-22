@@ -2,9 +2,9 @@ const api=require('../../utils/api'),ui=require('../../utils/ui'),model=require(
 Page({
  data:{ elder:null,busy:false,error:'',code:'',expires:'',markers:[],circles:[],hasMap:false,mapCenter:null,lastRefresh:'' },
  onLoad(query){this.id=query.id;this.visible=false;this.sequence=0;},
- onShow(){if(!ui.requireLogin())return;this.visible=true;this.refresh();this.timer=setInterval(()=>{if(!this.data.busy)this.refresh();},15000);},
+ onShow(){if(!ui.requireLogin())return;this.visible=true;this.refresh();},
  onHide(){this.stop();},onUnload(){this.stop();},
- stop(){this.visible=false;this.sequence++;clearInterval(this.timer);},
+ stop(){this.visible=false;this.sequence++;clearTimeout(this.queryTimer);},
  onPullDownRefresh(){this.refresh().finally(()=>wx.stopPullDownRefresh());},
  async load(){const sequence=++this.sequence;const elder=await api.request(api.elderPath(this.id));
    if(!this.visible||sequence!==this.sequence)return;
@@ -12,8 +12,18 @@ Page({
  },
  refresh(){return ui.run(this,()=>this.load());},
  locate(){return ui.run(this,async()=>{
-   await api.request(api.elderPath(this.id,'/location-request'),'POST',{});await this.load();
+   const result=await api.request(api.elderPath(this.id,'/location-request'),'POST',{});await this.load();
+   this.waitForQuery(result.id,40);
  });},
+ waitForQuery(id,remaining){
+   clearTimeout(this.queryTimer);
+   const request=this.data.elder&&this.data.elder.location_request;
+   if(!this.visible||remaining<=0||!request||request.id!==id||!this.data.elder.requestWaiting)return;
+   this.queryTimer=setTimeout(async()=>{
+     try{if(this.visible)await this.load();}catch(error){if(this.visible)this.setData({error:error.message||'刷新失败，请重试'});}
+     this.waitForQuery(id,remaining-1);
+   },5000);
+ },
  pair(){return ui.run(this,async()=>{
    const replace=!!this.data.elder.paired;
    if(replace&&!await ui.confirm('重新绑定适用于重装应用或更换手机。新手机输入口令并确认后旧设备失效，已有围栏、行程及家属授权保留。是否生成口令？'))return;

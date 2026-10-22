@@ -50,6 +50,21 @@ class TrackingService : Service(), LocationListener {
     private var syncing = false
     private var syncAgain = false
     private var retryCount = 0
+    private var cidChecks = 0
+    private val recoverCID = object : Runnable {
+        override fun run() {
+            if (!active()) return
+            if (ElderPushRuntime.cacheCID(this@TrackingService)) { syncNow(); return }
+            if (++cidChecks < 5) handler.postDelayed(this, 10000)
+            else {
+                if (prefs.getString("push_registration", "") != "initialization_failed") {
+                    prefs.edit().putString("push_registration", "waiting_cid")
+                        .putString("push_status", "推送未取得标识，请检查网络并点击“重试推送登记”").apply()
+                }
+                syncNow() // Report the failed startup once; no permanent registration polling.
+            }
+        }
+    }
     private val automaticTick = Runnable { syncNow() }
     private fun syncNow() {
         if (!active()) return
@@ -61,15 +76,25 @@ class TrackingService : Service(), LocationListener {
             var config: JSONObject? = null
             try {
                 val api = Api(this)
+                ElderPushRuntime.cacheCID(this)
                 val cid = prefs.getString("push_cid", "") ?: ""
                 if (cid.isNotEmpty()) {
                     try {
                         api.request("/device/push", JSONObject().put("cid", cid).put("app_id", BuildConfig.GETUI_APP_ID))
-                        prefs.edit().putString("push_status", "推送设备已登记，等待消息").apply()
-                    } catch (_: Exception) {
-                        prefs.edit().putString("push_status", "推送登记失败，请检查后台版本和个推AppID配置").apply()
+                        prefs.edit().putString("push_status", "推送设备已登记，等待消息").putString("push_registration", "registered").apply()
+                    } catch (e: Exception) {
+                        prefs.edit().putString("push_status", "推送登记失败：${e.message ?: "请检查网络和服务端配置"}")
+                            .putString("push_registration", "registration_failed").apply()
                     }
                 }
+                try {
+                    val diagnostics = JSONObject().put("app_version", BuildConfig.VERSION_NAME)
+                        .put("push_consent", prefs.getBoolean("push_consent", false))
+                        .put("cid_available", cid.isNotEmpty())
+                        .put("registration_state", prefs.getString("push_registration", "waiting_cid"))
+                    if (prefs.contains("push_online")) diagnostics.put("sdk_online", prefs.getBoolean("push_online", false))
+                    api.request("/device/diagnostics", diagnostics)
+                } catch (_: Exception) { /* Old backends can still receive location updates. */ }
                 config = api.request("/device/commands")
                 if (active()) prefs.edit().putString("settings", config.getJSONObject("settings").toString())
                     .putInt("settings_version", config.getInt("version")).commit()
@@ -118,7 +143,8 @@ class TrackingService : Service(), LocationListener {
             foregroundReady = true
             running = this
             settings = JSONObject(prefs.getString("settings", "{}") ?: "{}")
-            PushManager.getInstance().initialize(applicationContext)
+            ElderPushRuntime.start(this)
+            handler.postDelayed(recoverCID, 5000)
         } catch (_: Exception) {
             prefs.edit().putString("status", "系统未允许恢复定位，请打开应用重新开始守护").apply()
             stopSelf()
