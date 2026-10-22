@@ -5,6 +5,8 @@ import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URI
 
+class ApiFailure(val status: Int, message: String) : IllegalStateException(message)
+
 class Api(private val context: Context) {
     private val prefs get() = context.getSharedPreferences("guard", Context.MODE_PRIVATE)
     fun request(path: String, body: JSONObject? = null, authenticated: Boolean = true): JSONObject {
@@ -26,7 +28,7 @@ class Api(private val context: Context) {
             val status = connection.responseCode
             val stream = if (status in 200..299) connection.inputStream else connection.errorStream
             val result = JSONObject(stream?.bufferedReader()?.use { it.readText() } ?: "{}")
-            if (status !in 200..299) throw IllegalStateException(result.optString("error", "连接失败 ($status)"))
+            if (status !in 200..299) throw ApiFailure(status, result.optString("error", "连接失败 ($status)"))
             return result
         } finally { connection.disconnect() }
     }

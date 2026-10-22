@@ -1,14 +1,22 @@
 const api=require('../../utils/api'),ui=require('../../utils/ui'),model=require('../../utils/model');
 Page({
- data:{ elder:null,busy:false,error:'',code:'',expires:'',markers:[],circles:[],hasMap:false,mapCenter:null,lastRefresh:'' },
+ data:{ elder:null,busy:false,error:'',code:'',expires:'',markers:[],circles:[],hasMap:false,mapCenter:null,lastRefresh:'',alertError:'' },
  onLoad(query){this.id=query.id;this.visible=false;this.sequence=0;},
- onShow(){if(!ui.requireLogin())return;this.visible=true;this.refresh();},
+ onShow(){if(!ui.requireLogin())return;this.visible=true;this.refresh();this.alertTimer=setInterval(()=>{
+   if(!this.data.busy)this.loadAlerts().catch(error=>{if(this.visible)this.setData({alertError:error.message||'提醒同步失败'});});
+ },15000);},
  onHide(){this.stop();},onUnload(){this.stop();},
- stop(){this.visible=false;this.sequence++;clearTimeout(this.queryTimer);},
+ stop(){this.visible=false;this.sequence++;clearTimeout(this.queryTimer);clearInterval(this.alertTimer);},
  onPullDownRefresh(){this.refresh().finally(()=>wx.stopPullDownRefresh());},
  async load(){const sequence=++this.sequence;const elder=await api.request(api.elderPath(this.id));
    if(!this.visible||sequence!==this.sequence)return;
    this.setData(Object.assign({elder:model.decorate(elder),lastRefresh:new Date().toLocaleTimeString()},model.mapData(elder)));
+ },
+ async loadAlerts(){
+   const sequence=this.sequence;const updates=await api.request('/alerts');
+   if(!this.visible||sequence!==this.sequence||!this.data.elder)return;
+   const item=updates.elders.find(elder=>elder.id===this.id);
+   if(item)this.setData({elder:model.decorate(Object.assign({},this.data.elder,{events:item.events})),alertError:''});
  },
  refresh(){return ui.run(this,()=>this.load());},
  locate(){return ui.run(this,async()=>{

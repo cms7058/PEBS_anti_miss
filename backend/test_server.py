@@ -300,6 +300,41 @@ class SafetyFlowTests(unittest.TestCase):
         self.now += 61; self.upload(lat=31.02)
         self.assertFalse(self.active("outside"))
 
+    def test_moving_fence_samples_within_three_minutes_still_confirm_dwell(self):
+        self.settings(fence={"lat":31,"lon":121,"radius":500})
+        self.upload(lat=31.02)
+        self.now += 150; self.upload(lat=31.025)
+        self.assertEqual(len(self.active("outside")),1)
+        self.assertEqual(self.elder()["fence_status"]["state"],"outside_alert")
+
+    def test_alert_feed_is_authorized_and_contains_no_current_telemetry(self):
+        self.settings(fence={"lat":31,"lon":121,"radius":500})
+        self.upload();self.now += 601;self.s.tick()
+        data=self.call("GET","/alerts")
+        self.assertEqual(set(data),{"elders"})
+        row=data["elders"][0]
+        self.assertEqual(set(row),{"id","events"})
+        self.assertEqual(row["events"][0]["kind"],"offline")
+        self.assertEqual(self.call("GET","/alerts",token=self.stranger)["elders"],[])
+        self.invite(False)
+        self.assertEqual(len(self.call("GET","/alerts",token=self.other)["elders"]),1)
+        uid=self.s.user(self.other)
+        self.call("DELETE",f"/elders/{self.eid}/members/{uid}")
+        self.assertEqual(self.call("GET","/alerts",token=self.other)["elders"],[])
+
+    def test_fence_status_explains_trip_and_inaccurate_location(self):
+        self.settings(fence={"lat":31,"lon":121,"radius":500})
+        self.assertEqual(self.elder()["fence_status"]["state"],"waiting_location")
+        self.upload(accuracy=500)
+        self.assertEqual(self.elder()["fence_status"]["state"],"imprecise")
+        self.settings(trip={"name":"公园","lat":32,"lon":121,"radius":200,"deadline":self.now+600,"status":"active"})
+        self.assertEqual(self.elder()["fence_status"]["state"],"trip_exempt")
+        self.settings(trip=None)
+        self.now += 1;self.upload()
+        self.assertEqual(self.elder()["fence_status"]["state"],"inside")
+        status=self.call("GET","/device/settings",token=self.device)
+        self.assertEqual(status["last_recorded_at"],self.now)
+
     def test_trip_exemption_lasts_until_guardian_ends_it(self):
         self.settings(fence={"lat": 31, "lon": 121, "radius": 500}, trip={"name": "公园", "lat": 31.03, "lon": 121, "radius": 200, "deadline": self.now + 600, "status": "active"})
         for _ in range(4):

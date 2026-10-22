@@ -89,9 +89,13 @@ struct DeviceDiagnostics: Codable {
     let registration_state: String
     let updated_at: Double
 }
+struct FenceStatus: Codable { let state: String; let message: String }
+struct AlertUpdate: Codable { let id: String; let events: [GuardEvent] }
+struct AlertUpdates: Codable { let elders: [AlertUpdate] }
 struct Elder: Codable, Identifiable {
     let id: String
     let name: String
+    let fence_status: FenceStatus?
     let device_diagnostics: DeviceDiagnostics?
     let elder_push: ElderPushStatus?
     let location_request: LocationRequest?
@@ -104,7 +108,7 @@ struct Elder: Codable, Identifiable {
     let applied_version: Int
     let settings: GuardSettings
     let members: [Member]
-    let events: [GuardEvent]
+    var events: [GuardEvent]
 }
 extension Elder {
     var pushDescription: String? {

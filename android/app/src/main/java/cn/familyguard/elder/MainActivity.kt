@@ -76,7 +76,7 @@ class MainActivity : Activity() {
             button("重试推送登记") { startTracking() }
             button("停止位置共享") {
                 AlertDialog.Builder(this).setTitle("停止守护？").setMessage("停止后家属将无法获得新位置，并可能收到位置未更新提醒。").setPositiveButton("停止") { _, _ ->
-                    prefs.edit().putBoolean("tracking_enabled", false).commit()
+                    prefs.edit().putBoolean("tracking_enabled", false).remove("pending_location").commit()
                     PushManager.getInstance().turnOffPush(this)
                     stopService(Intent(this, TrackingService::class.java))
                     prefs.edit().putString("status", "位置共享已停止").apply(); status.text = "位置共享已停止"
@@ -89,7 +89,7 @@ class MainActivity : Activity() {
             content.addView(text("开启一次后可返回桌面、锁屏。无围栏和进行中的行程时不自动定位，只响应家属请求；围栏或进行中的行程约每分钟定位，取到位置后停止本次定位。通过个推接收家属请求，已取消30秒轮询。推送通道仍有少量通信耗电，锁屏或进程关闭可能无法响应。常驻通知表示守护服务运行中。请允许精确定位、通知，并在手机应用启动管理中允许自启动、关联启动和后台活动，在电池优化中允许本应用。普通系统回收会尝试恢复；手动停止后不会恢复。重启或强制停止后需重新打开应用。", 18f))
             button("解除与家属的绑定") {
                 AlertDialog.Builder(this).setTitle("解除绑定？").setMessage("解除后已授权的家属无法继续取得本机新位置。").setPositiveButton("解除") { _, _ ->
-                    prefs.edit().putBoolean("tracking_enabled", false).commit()
+                    prefs.edit().putBoolean("tracking_enabled", false).remove("pending_location").commit()
                     PushManager.getInstance().turnOffPush(this)
                     stopService(Intent(this, TrackingService::class.java))
                     worker.execute {

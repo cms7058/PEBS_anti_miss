@@ -50,6 +50,9 @@ final class NoRedirect: NSObject, URLSessionTaskDelegate {
     @Published var lastRefresh: Date?
     @Published var refreshFailure: String?
     private var refreshSequence = 0
+    @Published var alertsFailure: String?
+    private var alertsSequence = 0
+    private var knownAlertIDs = Set<String>()
     @Published var busy = false
     private var pushToken = ""
     private let network: URLSession = {
@@ -123,6 +126,7 @@ final class NoRedirect: NSObject, URLSessionTaskDelegate {
             let result: ElderList = try await request("/elders")
             try Task.checkCancellation()
             guard token == session, server == address, sequence == refreshSequence else { return }
+            if lastRefresh == nil { knownAlertIDs.formUnion(result.elders.flatMap { $0.events.map(\.id) }) }
             elders = result.elders
             lastRefresh = Date()
             refreshFailure = nil
@@ -137,9 +141,45 @@ final class NoRedirect: NSObject, URLSessionTaskDelegate {
             throw error
         }
     }
+    func refreshAlerts() async throws {
+        guard !token.isEmpty else { return }
+        let session = token, address = server, snapshot = refreshSequence
+        alertsSequence += 1
+        let sequence = alertsSequence
+        do {
+            let updates: AlertUpdates = try await request("/alerts")
+            try Task.checkCancellation()
+            guard token == session, server == address, snapshot == refreshSequence, sequence == alertsSequence else { return }
+            for update in updates.elders {
+                guard let index = elders.firstIndex(where: { $0.id == update.id }) else { continue }
+                let newEvents = update.events.filter { $0.active == 1 && $0.handler == nil && !knownAlertIDs.contains($0.id) }
+                knownAlertIDs.formUnion(update.events.map(\.id))
+                elders[index].events = update.events // Coordinates and battery snapshots remain unchanged.
+                let settings = await UNUserNotificationCenter.current().notificationSettings()
+                guard token == session, server == address else { return }
+                if settings.authorizationStatus == .authorized || settings.authorizationStatus == .provisional {
+                    for event in newEvents {
+                        let content = UNMutableNotificationContent()
+                        content.title = "家人守护提醒"
+                        content.body = event.message
+                        content.sound = .default
+                        content.userInfo = ["elder_id": update.id, "event_id": event.id]
+                        try? await UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: "guard-event-" + event.id, content: content, trigger: nil))
+                    }
+                }
+            }
+            alertsFailure = nil
+        } catch {
+            if !Task.isCancelled, token == session, server == address, sequence == alertsSequence { alertsFailure = error.localizedDescription }
+            throw error
+        }
+    }
     func enablePush() async {
         #if DEBUG
-        pushStatus = "当前 Debug 测试版未启用苹果推送；可查看位置和 App 内异常记录"
+        do {
+            let allowed = try await UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge])
+            pushStatus = allowed ? "前台本地提醒已允许；当前Debug未启用苹果远程推送" : "本地通知未允许，请到系统设置开启"
+        } catch { pushStatus = "本地通知授权失败" }
         return
         #else
         do {
@@ -161,7 +201,7 @@ final class NoRedirect: NSObject, URLSessionTaskDelegate {
         if !pushToken.isEmpty { let _: OK = try await request("/push/device", method: "DELETE", body: ["token": pushToken]) }
         let _: OK = try await request("/auth/logout", method: "POST", body: [:])
         try Vault.write("")
-        token = ""; elders = []; selectedID = nil; lastRefresh = nil; refreshFailure = nil
+        token = ""; elders = []; selectedID = nil; lastRefresh = nil; refreshFailure = nil; alertsFailure = nil; knownAlertIDs = []
         UIApplication.shared.unregisterForRemoteNotifications()
     }
     func save(elder: Elder, settings: GuardSettings) async throws {

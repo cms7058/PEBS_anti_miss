@@ -194,6 +194,9 @@ struct ElderView: View {
                             Text("规则变更推送失败，请打开老人端同步规则").foregroundStyle(.orange)
                         }
                         LabeledContent("电子围栏", value: elder.settings.fence.map { "半径 \(Int($0.radius)) 米" } ?? "未设置")
+                        if let status = elder.fence_status {
+                            Text(status.message).font(.caption).foregroundStyle(status.state == "inside" ? Color.secondary : Color.orange)
+                        }
                         if let trip = elder.settings.trip {
                             LabeledContent("目的地", value: trip.name)
                             Text(trip.status == "active" ? "预计 \(timeLabel(trip.deadline)) 前到达；本次行程允许离开日常围栏" : trip.status == "arrived" ? "已确认到达；家属结束行程后恢复日常围栏监测" : "行程已结束")
@@ -218,6 +221,10 @@ struct ElderView: View {
                         }
                     }
                     Section("异常提醒") {
+                        if !model.pushConfigured {
+                            Text("苹果远程通知未配置：App打开时会检查异常；退出或锁屏后不能依靠此方式收提醒。")
+                                .font(.caption).foregroundStyle(.orange)
+                        }
                         if elder.events.isEmpty { Text("暂无提醒").foregroundStyle(.secondary) }
                         ForEach(elder.events) { event in
                             VStack(alignment: .leading, spacing: 9) {
@@ -231,20 +238,23 @@ struct ElderView: View {
                                 else { Button("我来处理") { Task { await model.perform { let _: OK = try await model.request("/elders/\(id)/events/\(event.id)/ack", method: "POST", body: [:]); try await model.refresh() } } } }
                                 if !event.delivery.isEmpty { Text(deliveryText(event.delivery)).font(.caption).foregroundStyle(.secondary) }
                                 if elder.can_edit { Button("删除此提醒", role: .destructive) { deletingEvent = event }.disabled(model.busy) }
-                            }.padding(.vertical, 5)
+                            }.padding(.vertical, 5).buttonStyle(.borderless)
+                                .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                                    if elder.can_edit { Button("删除", role: .destructive) { deletingEvent = event } }
+                                }
                         }
                     }
                 }.navigationTitle(elder.name)
                     .refreshable { do { try await model.refresh() } catch { model.error = error.localizedDescription } }
                     .sheet(item: Binding(get: { edit.map { Selection(id: $0) } }, set: { edit = $0?.id })) { mode in PlaceEditor(elder: elder, mode: mode.id) }
                     .sheet(isPresented: $members) { MembersView(id: id) }
-                    .alert("删除这条异常提醒？", isPresented: Binding(get: { deletingEvent != nil }, set: { if !$0 { deletingEvent = nil } })) {
+                    .alert("删除这条异常提醒？", isPresented: Binding(get: { deletingEvent != nil }, set: { if !$0 { deletingEvent = nil } }), presenting: deletingEvent) { event in
                         Button("删除", role: .destructive) {
-                            if let event = deletingEvent { deleteEvent(event) }
+                            deleteEvent(event)
                             deletingEvent = nil
                         }
                         Button("取消", role: .cancel) { deletingEvent = nil }
-                    } message: {
+                    } message: { _ in
                         Text("会从服务端删除此提醒及其记录的位置，所有家属同步移除。删除不改变围栏或行程；同一异常恢复后再次发生仍会提醒。")
                     }
                     .confirmationDialog("重新绑定这位老人的手机？", isPresented: $confirmRebind, titleVisibility: .visible) {
@@ -402,8 +412,11 @@ struct DataSyncStatusView: View {
             if let failure = model.refreshFailure {
                 Text("刷新失败，请点击重试：\(failure)").font(.caption).foregroundStyle(.orange)
             }
-            Text("页面数据为上次读取的快照，不定时刷新位置和电量。")
+            Text("位置和电量为手动读取快照；异常提醒在前台自动更新。")
                 .font(.caption).foregroundStyle(.secondary)
+            if let failure = model.alertsFailure {
+                Text("异常提醒同步失败：\(failure)").font(.caption).foregroundStyle(.orange)
+            }
             Button("立即刷新后台数据") { Task { await model.perform { try await model.refresh() } } }
                 .disabled(model.busy)
         }

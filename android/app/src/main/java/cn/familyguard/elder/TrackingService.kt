@@ -8,6 +8,8 @@ import android.location.Location
 import android.location.LocationListener
 import android.location.LocationManager
 import android.os.*
+import android.net.ConnectivityManager
+import android.net.Network
 import org.json.JSONObject
 import com.igexin.sdk.PushManager
 import java.text.SimpleDateFormat
@@ -19,6 +21,23 @@ import java.util.concurrent.Executors
 class TrackingService : Service(), LocationListener {
     private lateinit var manager: LocationManager
     private val worker = Executors.newSingleThreadExecutor()
+    private val uploader = Executors.newSingleThreadExecutor()
+    private var pendingUpload: JSONObject? = null
+    private var uploadFailures = 0
+    private var lastNetworkSignal = 0L
+    private var networkRegistered = false
+    private val retryUpload = Runnable { sendPending() }
+    private val networkCallback = object : ConnectivityManager.NetworkCallback() {
+        override fun onAvailable(network: Network) {
+            handler.post {
+                if (active() && SystemClock.elapsedRealtime() - lastNetworkSignal > 5000) {
+                    lastNetworkSignal = SystemClock.elapsedRealtime()
+                    sendPending()
+                    syncNow()
+                }
+            }
+        }
+    }
     private val handler = Handler(Looper.getMainLooper())
     private val prefs by lazy { getSharedPreferences("guard", MODE_PRIVATE) }
     @Volatile private var destroyed = false
@@ -26,7 +45,7 @@ class TrackingService : Service(), LocationListener {
     private var locating = false
     private var uploading = false
     private var bestLocation: Location? = null
-    private var fixStarted = 0L
+    private var fixStartedElapsed = 0L
     private var nextFix = 0L
     private var request: JSONObject? = null
     private var completedRequest = ""
@@ -76,25 +95,6 @@ class TrackingService : Service(), LocationListener {
             var config: JSONObject? = null
             try {
                 val api = Api(this)
-                ElderPushRuntime.cacheCID(this)
-                val cid = prefs.getString("push_cid", "") ?: ""
-                if (cid.isNotEmpty()) {
-                    try {
-                        api.request("/device/push", JSONObject().put("cid", cid).put("app_id", BuildConfig.GETUI_APP_ID))
-                        prefs.edit().putString("push_status", "推送设备已登记，等待消息").putString("push_registration", "registered").apply()
-                    } catch (e: Exception) {
-                        prefs.edit().putString("push_status", "推送登记失败：${e.message ?: "请检查网络和服务端配置"}")
-                            .putString("push_registration", "registration_failed").apply()
-                    }
-                }
-                try {
-                    val diagnostics = JSONObject().put("app_version", BuildConfig.VERSION_NAME)
-                        .put("push_consent", prefs.getBoolean("push_consent", false))
-                        .put("cid_available", cid.isNotEmpty())
-                        .put("registration_state", prefs.getString("push_registration", "waiting_cid"))
-                    if (prefs.contains("push_online")) diagnostics.put("sdk_online", prefs.getBoolean("push_online", false))
-                    api.request("/device/diagnostics", diagnostics)
-                } catch (_: Exception) { /* Old backends can still receive location updates. */ }
                 config = api.request("/device/commands")
                 if (active()) prefs.edit().putString("settings", config.getJSONObject("settings").toString())
                     .putInt("settings_version", config.getInt("version")).commit()
@@ -128,7 +128,30 @@ class TrackingService : Service(), LocationListener {
                     handler.postDelayed(automaticTick, 20000)
                 }
             }
+            if (active()) reportPushState()
         }
+    }
+    private fun reportPushState() {
+        try {
+            val api = Api(this)
+            ElderPushRuntime.cacheCID(this)
+            val cid = prefs.getString("push_cid", "") ?: ""
+            if (cid.isNotEmpty()) {
+                try {
+                    api.request("/device/push", JSONObject().put("cid", cid).put("app_id", BuildConfig.GETUI_APP_ID))
+                    prefs.edit().putString("push_status", "推送设备已登记，等待消息").putString("push_registration", "registered").apply()
+                } catch (e: Exception) {
+                    prefs.edit().putString("push_status", "推送登记失败：${e.message ?: "请检查网络"}")
+                        .putString("push_registration", "registration_failed").apply()
+                }
+            }
+            if (!active()) return
+            val diagnostics = JSONObject().put("app_version", BuildConfig.VERSION_NAME)
+                .put("push_consent", prefs.getBoolean("push_consent", false)).put("cid_available", cid.isNotEmpty())
+                .put("registration_state", prefs.getString("push_registration", "waiting_cid"))
+            if (prefs.contains("push_online")) diagnostics.put("sdk_online", prefs.getBoolean("push_online", false))
+            api.request("/device/diagnostics", diagnostics)
+        } catch (_: Exception) { /* Diagnostics must never block location uploads. */ }
     }
     private fun active() = !destroyed && prefs.getBoolean("tracking_enabled", false)
     private fun hasPermission() = checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
@@ -143,6 +166,11 @@ class TrackingService : Service(), LocationListener {
             foregroundReady = true
             running = this
             settings = JSONObject(prefs.getString("settings", "{}") ?: "{}")
+            pendingUpload = try { prefs.getString("pending_location", null)?.let { JSONObject(it) } } catch (_: Exception) { null }
+            try {
+                getSystemService(ConnectivityManager::class.java).registerDefaultNetworkCallback(networkCallback)
+                networkRegistered = true
+            } catch (_: Exception) { }
             ElderPushRuntime.start(this)
             handler.postDelayed(recoverCID, 5000)
         } catch (_: Exception) {
@@ -163,6 +191,7 @@ class TrackingService : Service(), LocationListener {
         if (!foregroundReady || !active() || prefs.getString("token", "").isNullOrEmpty() || !hasPermission()) {
             stopSelf(); return START_NOT_STICKY
         }
+        sendPending()
         syncNow()
         return START_STICKY
     }
@@ -174,7 +203,7 @@ class TrackingService : Service(), LocationListener {
         if (!active() || locating || uploading || !hasPermission()) return
         nextFix = SystemClock.elapsedRealtime() + interval()
         bestLocation = null
-        fixStarted = System.currentTimeMillis()
+        fixStartedElapsed = SystemClock.elapsedRealtime()
         locating = true
         var listening = false
         for (provider in listOf(LocationManager.NETWORK_PROVIDER, LocationManager.GPS_PROVIDER)) {
@@ -189,7 +218,7 @@ class TrackingService : Service(), LocationListener {
             stopFix(); update("系统定位未开启或权限不足，请打开定位设置"); return
         }
         update(if (request != null) "已收到家属请求，正在获取新位置…" else "正在进行定时定位…")
-        handler.postDelayed(fixTimeout, 45000)
+        handler.postDelayed(fixTimeout, 90000)
     }
     private fun stopFix() {
         locating = false
@@ -198,42 +227,87 @@ class TrackingService : Service(), LocationListener {
     }
     override fun onLocationChanged(location: Location) {
         if (!active() || !locating || uploading) return
-        // A provider cache must not complete a new remote request.
-        if (location.time < fixStarted || location.time <= prefs.getLong("last_uploaded_capture", 0)) return
-        if (!location.hasAccuracy() || location.accuracy <= 0 || System.currentTimeMillis() - location.time !in 0..120000) return
-        if (bestLocation == null || location.accuracy < bestLocation!!.accuracy) bestLocation = Location(location)
+        val elapsed = location.elapsedRealtimeNanos / 1000000
+        if (!location.hasAccuracy() || !LocationPolicy.fresh(elapsed, SystemClock.elapsedRealtime(), fixStartedElapsed,
+                location.time, System.currentTimeMillis(), prefs.getLong("last_uploaded_capture", 0), location.accuracy)) return
+        val best = bestLocation
+        val moving = location.hasSpeed() && location.speed > 0.7f
+        if (best == null || LocationPolicy.prefer(location.accuracy, elapsed, best.accuracy, best.elapsedRealtimeNanos / 1000000, moving)) bestLocation = Location(location)
         // Give GPS time to improve a coarse network fix before accepting it.
         if (location.accuracy <= 100) uploadLocation(location)
     }
     private fun uploadLocation(location: Location) {
+        if (!active()) return
+        stopFix()
+        val remote = request?.takeIf { it.optString("id") != completedRequest &&
+            it.optDouble("expires") > System.currentTimeMillis()/1000.0 && location.time/1000.0 >= it.optDouble("requested_at") }
+        val battery = getSystemService(BatteryManager::class.java).getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY).coerceIn(0, 100)
+        val payload = JSONObject().put("lat", location.latitude).put("lon", location.longitude)
+            .put("accuracy", location.accuracy.toDouble()).put("recorded_at", location.time / 1000.0)
+            .put("battery", battery).put("applied_version", prefs.getInt("settings_version", 0))
+        if (remote != null) payload.put("request_id", remote.getString("id")).put("request_expires", remote.getDouble("expires"))
+        val previous = pendingUpload
+        if (previous == null || payload.getDouble("recorded_at") > previous.getDouble("recorded_at")) {
+            pendingUpload = payload
+            uploadFailures = 0
+            prefs.edit().putString("pending_location", payload.toString()).commit()
+        }
+        sendPending()
+    }
+    private fun sendPending() {
         if (!active() || uploading) return
-        val remote = request?.takeIf { it.optString("id") != completedRequest && it.optDouble("expires") > System.currentTimeMillis()/1000.0 }
-        if (remote != null && location.time / 1000.0 < remote.getDouble("requested_at")) {
-            stopFix()
-            nextFix = 0
-            update("已收到新请求，等待重新采集位置")
+        val stored = pendingUpload ?: return
+        val captured = (stored.getDouble("recorded_at") * 1000).toLong()
+        if (!LocationPolicy.uploadable(captured, System.currentTimeMillis())) {
+            pendingUpload = null
+            prefs.edit().remove("pending_location").apply()
+            update("待传位置已过期，等待下一次新定位；不会把旧位置当作实时位置")
             return
         }
-        stopFix()
+        handler.removeCallbacks(retryUpload)
+        val payload = JSONObject(stored.toString())
+        val requestID = payload.optString("request_id")
+        if (payload.optDouble("request_expires", 0.0) <= System.currentTimeMillis()/1000.0) payload.remove("request_id")
+        payload.remove("request_expires")
         uploading = true
-        worker.execute {
+        uploader.execute {
+            var failure: String? = null
             try {
                 if (!active()) return@execute
-                val battery = getSystemService(BatteryManager::class.java).getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY).coerceIn(0, 100)
-                val payload = JSONObject().put("lat", location.latitude).put("lon", location.longitude)
-                    .put("accuracy", location.accuracy.toDouble()).put("recorded_at", location.time / 1000.0)
-                    .put("battery", battery).put("applied_version", prefs.getInt("settings_version", 0))
-                if (remote != null) payload.put("request_id", remote.getString("id"))
-                Api(this).request("/device/location", payload)
-                prefs.edit().putLong("last_uploaded_capture", location.time).putLong("last_upload", System.currentTimeMillis()).apply()
-                val time = SimpleDateFormat("HH:mm:ss", Locale.CHINA).format(Date(location.time))
-                handler.post {
-                    if (remote != null) completedRequest = remote.getString("id")
-                    update("省电守护中 · $time 已同步 · 定位已暂停，等待下次采集")
+                val api = Api(this)
+                try { api.request("/device/location", payload) }
+                catch (e: ApiFailure) {
+                    if (e.status != 409) throw e
+                    // An acknowledgement can be lost during Wi-Fi/mobile handover.
+                    val status = api.request("/device/settings")
+                    if (status.optDouble("last_recorded_at", -1.0) < payload.getDouble("recorded_at")) {
+                        payload.remove("request_id")
+                        api.request("/device/location", payload)
+                    }
                 }
-            } catch (e: Exception) {
-                handler.post { update("位置同步失败：${e.message ?: "请检查网络"}") }
-            } finally { handler.post { uploading = false; if (active()) syncNow() } }
+                prefs.edit().putLong("last_uploaded_capture", maxOf(captured, prefs.getLong("last_uploaded_capture", 0)))
+                    .putLong("last_upload", System.currentTimeMillis()).apply()
+            } catch (e: Exception) { failure = e.message ?: "请检查网络" }
+            val error = failure
+            handler.post {
+                uploading = false
+                if (!active()) return@post
+                val same = pendingUpload?.optDouble("recorded_at") == stored.getDouble("recorded_at")
+                if (error == null) {
+                    if (same) { pendingUpload = null; prefs.edit().remove("pending_location").apply() }
+                    if (requestID.isNotEmpty()) completedRequest = requestID
+                    val time = SimpleDateFormat("HH:mm:ss", Locale.CHINA).format(Date(captured))
+                    update("省电守护中 · $time 已同步 · 等待下次采集")
+                    if (pendingUpload != null) sendPending()
+                    syncNow()
+                } else {
+                    update("已取得位置，网络上传失败：$error；正在等待重试")
+                    if (!same) { sendPending(); return@post }
+                    val delay = LocationPolicy.retryDelay(++uploadFailures)
+                    if (delay >= 0) handler.postDelayed(retryUpload, delay)
+                    // Network recovery can also retry this original capture before it expires.
+                }
+            }
         }
     }
     override fun onProviderEnabled(provider: String) { nextFix = 0 }
@@ -245,7 +319,11 @@ class TrackingService : Service(), LocationListener {
         if (running === this) running = null
         stopFix()
         handler.removeCallbacksAndMessages(null)
+        if (networkRegistered) {
+            try { getSystemService(ConnectivityManager::class.java).unregisterNetworkCallback(networkCallback) } catch (_: Exception) { }
+        }
         worker.shutdownNow()
+        uploader.shutdownNow()
         super.onDestroy()
     }
 }

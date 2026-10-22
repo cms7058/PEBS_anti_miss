@@ -112,3 +112,15 @@
 - iOS Debug模拟器通用目标编译通过；没有持续刷新数据任务。主动查询有界等待，普通位置及电量为手动读取快照。
 - 小程序实际页面测试验证onShow读取一次、不创建普通setInterval；推送缺CID状态文本及原有API集成测试通过，官方5页WXML/WXSS编译通过。
 - 此次未连接老人真机，不能确认登记故障具体由SDK回调、网络或权限中哪项造成。新版提供现场诊断和显式注册重试；需要更新后读取真实状态。
+
+## 2026-10-22：移动场景与异常交互（0.1.5）
+
+- Android0.1.5 / versionCode6构建成功，签名校验通过；SHA-256：`2afd49fe6158e21ac340b7135bf47976f5e3ac42e9a1d1c4a83ec433fe751b1a`。
+- JDK17直接编译运行LocationPolicyChecks：移动新样本、GPS/系统时间偏差、旧缓存拒绝、移动时较新样本选择、网络恢复保留原始采集、过期拒绝及有界重试均通过。
+- 后端57项测试通过，包含150秒间隔的有效越界样本、长期缺样本重置、行程豁免、围栏状态说明、异常流权限和不携带当前电量/定位。
+- iOS模拟器Debug目标编译成功；按钮独立样式、捕获指定记录的删除确认和侧滑删除已编译，尚未做真机点按回归。
+- 小程序接口测试和官方5页WXML/WXSS编译通过；前台异常更新不会改变保存的位置/电量快照。
+- 公网health实际返回elder_push_configured=true、push_configured=false。用户确认保留行程期间离开围栏的规则，并确认问题为管理端打开时位置超时，不将APNs缺失当成此定位问题的原因。
+- 没有取得老人手机移动过程的系统日志，也未进行本次移动真机测试；不能确认现场是否还有网络、GPS或厂商保活因素。
+
+政策测试命令：使用本地JDK的javac将`LocationPolicy.java`和`scripts/tests/LocationPolicyChecks.java`编译到`build/location-policy-checks`，然后运行`java -cp build/location-policy-checks LocationPolicyChecks`。

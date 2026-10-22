@@ -16,6 +16,9 @@ from urllib.parse import urlsplit
 from backend.elder_push import ElderPushWorker, configured as elder_push_configured
 
 
+MAX_FENCE_SAMPLE_GAP = 180
+
+
 class APIError(Exception):
     def __init__(self, status, message):
         self.status, self.message = status, message
@@ -159,16 +162,45 @@ class Store:
         result["is_owner"] = elder["owner"] == uid
         member = self.one("SELECT can_edit FROM members WHERE elder_id=? AND user_id=?", (elder["id"], uid))
         result["can_edit"] = result["is_owner"] or bool(member and member["can_edit"])
-        result["events"] = self.rows("SELECT e.*,u.name AS handler FROM events e LEFT JOIN users u ON u.id=e.acknowledged_by WHERE elder_id=? ORDER BY created DESC LIMIT 100", (elder["id"],))
-        for event in result["events"]:
-            event["location"] = json.loads(event["location"]) if event["location"] else None
-            # Read notification state only for this account's devices.
-            event["delivery"] = self.rows("SELECT state,attempts,last_error FROM outbox WHERE event_id=? AND token IN (SELECT token FROM devices WHERE user_id=?)", (event["id"], uid))
+        result["events"] = self.event_rows(elder["id"], uid)
+        result["fence_status"] = self.fence_status(elder)
         if result["is_owner"]:
             result["members"] = self.rows("SELECT u.id,u.name,m.can_edit FROM members m JOIN users u ON u.id=m.user_id WHERE elder_id=?", (elder["id"],))
         else:
             result["members"] = []
         return result
+
+    def event_rows(self, elder_id, uid):
+        events = self.rows("SELECT e.*,u.name AS handler FROM events e LEFT JOIN users u ON u.id=e.acknowledged_by WHERE elder_id=? ORDER BY created DESC LIMIT 100", (elder_id,))
+        for event in events:
+            event["location"] = json.loads(event["location"]) if event["location"] else None
+            # Read notification state only for this account's devices.
+            event["delivery"] = self.rows("SELECT state,attempts,last_error FROM outbox WHERE event_id=? AND token IN (SELECT token FROM devices WHERE user_id=?)", (event["id"], uid))
+        return events
+
+    def fence_status(self, elder):
+        settings = json.loads(elder["settings"])
+        fence, trip = settings.get("fence"), settings.get("trip")
+        if not fence: return {"state": "disabled", "message": "尚未开启电子围栏"}
+        if not elder["consent"]: return {"state": "waiting_device", "message": "围栏已保存，等待老人手机绑定并开启守护"}
+        if trip and trip["status"] in ("active", "arrived"):
+            return {"state": "trip_exempt", "message": "本次行程允许离开围栏；结束行程后恢复越界提醒"}
+        loc = json.loads(elder["last_location"]) if elder["last_location"] else None
+        if not loc or self.clock() - loc["recorded_at"] >= 120:
+            return {"state": "waiting_location", "message": "围栏已开启，等待手机上传新位置"}
+        if loc["accuracy"] > 100:
+            return {"state": "imprecise", "message": "围栏已开启，当前定位精度不足，暂不能确认越界"}
+        delta = distance(loc, fence)
+        if delta - loc["accuracy"] > fence["radius"]:
+            since = elder["outside_since"] if elder["outside_since"] is not None else loc["recorded_at"]
+            elapsed = max(0, loc["recorded_at"] - since)
+            if elder["outside_count"] >= 2 and elapsed >= settings["outside_delay"]:
+                return {"state": "outside_alert", "message": "已确认持续越界，请查看异常提醒"}
+            remaining = max(0, int(settings["outside_delay"] - elapsed))
+            return {"state": "outside", "message": f"已确认在围栏外，持续时间还需约{remaining}秒，并需多次有效定位确认"}
+        if delta + loc["accuracy"] <= fence["radius"]:
+            return {"state": "inside", "message": "围栏监测中，当前在范围内"}
+        return {"state": "uncertain", "message": "当前位置接近围栏边缘，误差范围内不判为越界"}
 
     def evaluate(self, elder):
         settings = json.loads(elder["settings"])
@@ -293,7 +325,8 @@ class Store:
                     request = None
                 return {"location_request": request, "version": elder["version"], "settings": json.loads(elder["settings"])}
             if method == "GET" and path == "/device/settings":
-                return {"version": elder["version"], "settings": json.loads(elder["settings"])}
+                last = json.loads(elder["last_location"])["recorded_at"] if elder["last_location"] else None
+                return {"version": elder["version"], "settings": json.loads(elder["settings"]), "last_recorded_at": last}
             if method == "POST" and path == "/device/unpair":
                 self.db.execute("DELETE FROM elder_diagnostics WHERE elder_id=?", (elder["id"],))
                 self.db.execute("DELETE FROM elder_push_devices WHERE elder_id=?", (elder["id"],))
@@ -324,7 +357,7 @@ class Store:
                 settings = json.loads(elder["settings"])
                 fence = settings.get("fence")
                 trip = settings.get("trip")
-                if previous and loc["recorded_at"] - previous["recorded_at"] > 120:
+                if previous and loc["recorded_at"] - previous["recorded_at"] > MAX_FENCE_SAMPLE_GAP:
                     self.db.execute("UPDATE elders SET outside_since=NULL,outside_count=0 WHERE id=?", (elder["id"],))
                 if fence and not (trip and trip["status"] in ("active", "arrived")) and loc["accuracy"] <= 100 and now - loc["recorded_at"] < 120 and distance(loc, fence) - loc["accuracy"] > fence["radius"]:
                     self.db.execute("UPDATE elders SET outside_since=COALESCE(outside_since,?),outside_count=outside_count+1 WHERE id=?", (loc["recorded_at"], elder["id"]))
@@ -358,6 +391,9 @@ class Store:
             else:
                 self.db.execute("DELETE FROM devices WHERE token=? AND user_id=?", (value, uid))
             return {"ok": True}
+        if path == "/alerts" and method == "GET":
+            elders = self.rows("SELECT id FROM elders WHERE owner=? OR id IN (SELECT elder_id FROM members WHERE user_id=?)", (uid, uid))
+            return {"elders": [{"id": e["id"], "events": self.event_rows(e["id"], uid)} for e in elders]}
         if path == "/elders" and method == "GET":
             return {"elders": [self.snapshot(e, uid) for e in self.rows("SELECT * FROM elders WHERE owner=? OR id IN (SELECT elder_id FROM members WHERE user_id=?)", (uid, uid))]}
         if path == "/elders" and method == "POST":

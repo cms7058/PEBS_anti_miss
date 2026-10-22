@@ -60,15 +60,17 @@ async function main(){
  assert.equal(decorated.stale,false);assert.equal(decorated.syncLabel,'设备已确认当前设置');assert.equal(model.mapData(elder).markers.length,3);
  // Opening a detail page loads once; ordinary telemetry must not start a periodic timer.
  const manualPage=page('elder');manualPage.onLoad({id:eid});
- const savedInterval=global.setInterval;let intervals=0,loads=0;
- global.setInterval=()=>{intervals++;return 0;};manualPage.refresh=()=>{loads++;return Promise.resolve();};
- try{manualPage.onShow();assert.equal(loads,1);assert.equal(intervals,0);}finally{global.setInterval=savedInterval;manualPage.stop();}
+ const savedInterval=global.setInterval;let intervals=0,loads=0,alertLoads=0,alertTick;
+ global.setInterval=fn=>{intervals++;alertTick=fn;return 0;};manualPage.refresh=()=>{loads++;return Promise.resolve();};manualPage.loadAlerts=async()=>{alertLoads++;};
+ try{manualPage.onShow();assert.equal(loads,1);assert.equal(intervals,1);alertTick();assert.equal(loads,1);assert.equal(alertLoads,1);}finally{global.setInterval=savedInterval;manualPage.stop();}
  const diagnostic=model.decorate(Object.assign({},elder,{elder_push:{configured:true,registered:false},device_diagnostics:{app_version:'0.1.4',push_consent:true,cid_available:false}}));
  assert.match(diagnostic.pushLabel,/SDK尚未取得标识/);
  // Server-side offline monitoring produces a real event; exercise the actual detail-page acknowledgement.
  await new Promise(resolve=>{queue.push(resolve);backend.stdin.write(JSON.stringify({advance:601})+'\n');});
  const detail=page('elder');detail.onLoad({id:eid});detail.visible=true;await detail.load();
  assert.ok(detail.data.elder.events.some(event=>event.kind==='offline'&&event.active));
+ const snapshotLocation=JSON.stringify(detail.data.elder.location);
+ await detail.loadAlerts();assert.equal(JSON.stringify(detail.data.elder.location),snapshotLocation);
  const offline=detail.data.elder.events.find(event=>event.kind==='offline');
  await detail.ack({currentTarget:{dataset:{id:offline.id}}});
  assert.equal(detail.data.elder.events.find(event=>event.id===offline.id).handler,'mini-owner');

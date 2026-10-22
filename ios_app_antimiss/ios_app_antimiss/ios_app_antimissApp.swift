@@ -46,6 +46,10 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
                 guard scenePhase == .active, !model.token.isEmpty else { return }
                 await model.enablePush()
             }
+            .task(id: scenePhase == .active ? model.token : "") {
+                guard scenePhase == .active, !model.token.isEmpty else { return }
+                await RefreshLoop.run(attempt: { try await model.refreshAlerts() }, failure: { _ in })
+            }
         }
     }
 }

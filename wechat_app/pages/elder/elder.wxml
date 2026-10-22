@@ -22,6 +22,8 @@
    <view wx:if="{{elder.can_edit}}"><button data-mode="fence" bindtap="settings">设置电子围栏</button><button data-mode="trip" bindtap="settings">指定目的地与到达时间</button><button data-mode="threshold" bindtap="settings">调整提醒时间</button><button wx:if="{{elder.settings.trip}}" bindtap="endTrip" disabled="{{busy}}">结束本次行程</button></view>
    <button wx:if="{{elder.is_owner}}" bindtap="members">管理授权家属</button>
   </view>
+  <view class="error" wx:if="{{alertError}}">{{alertError}}</view>
+  <view class="muted" wx:if="{{elder.fence_status}}">{{elder.fence_status.message}}</view>
   <view class="heading">异常记录</view><view class="muted" wx:if="{{!elder.events.length}}">暂无异常记录</view>
   <view class="card" wx:for="{{elder.events}}" wx:key="id"><view class="row"><text class="heading">{{item.message}}</text><text class="tag">{{item.active ? '异常仍在持续' : '已恢复'}}</text></view><view class="muted">{{item.timeLabel}}</view><view class="selectable">{{item.locationLabel}}</view><view wx:if="{{item.handler}}">已由 {{item.handler}} 接手</view><button wx:if="{{item.location}}" data-id="{{item.id}}" bindtap="eventMap">查看事件位置</button><button wx:if="{{item.active && !item.handler}}" data-id="{{item.id}}" bindtap="ack" disabled="{{busy}}">我来接手</button><button wx:if="{{elder.can_edit}}" data-id="{{item.id}}" bindtap="deleteEvent" disabled="{{busy}}">删除此提醒</button></view>
  </view>
