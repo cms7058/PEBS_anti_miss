@@ -57,7 +57,8 @@ HOST=0.0.0.0 DATABASE_PATH=build/family-dev.sqlite3 python3 -m backend.server
 打开 [Xcode 工程](ios_app_antimiss/ios_app_antimiss.xcodeproj)，选择 `ios_app_antimiss` scheme。
 
 - 模拟器：选择 iPhone 模拟器运行。首次创建管理账号，添加老人，复制绑定码。
-- 真机：在 Signing & Capabilities 选择自己的 Apple 开发者 Team；使用自己注册的 Bundle ID，启用 Push Notifications。连接 iPhone 编译安装。
+- 真机测试：在 Signing & Capabilities 选择自己的 Apple 开发者 Team；使用自己注册的 Bundle ID，选择 Debug 编译安装。Debug 默认使用空的 `FamilyGuard.Debug.entitlements`，不要求苹果推送权限；可测试位置及管理功能。
+- 正式苹果推送：Release 使用 `FamilyGuard.entitlements`，需要匹配的 Push Notifications 描述文件和后台 APNs 配置。若后续要用 Debug 测试 APNs，需先配置支持推送的开发描述文件，再恢复 Debug 的推送签名与注册逻辑。
 - 管理授权：老人详情 → 管理授权人员 → 选择是否允许修改设置 → 生成邀请；另一位家属使用自己的账号接受邀请。
 - 通知状态：主页 → 账号 → 启用 / 重试通知。允许系统通知，且后台配置 APNs 后才能测试退出 App 后的推送。
 

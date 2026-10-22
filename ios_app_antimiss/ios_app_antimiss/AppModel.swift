@@ -138,11 +138,16 @@ final class NoRedirect: NSObject, URLSessionTaskDelegate {
         }
     }
     func enablePush() async {
+        #if DEBUG
+        pushStatus = "当前 Debug 测试版未启用苹果推送；可查看位置和 App 内异常记录"
+        return
+        #else
         do {
             let granted = try await UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge])
             pushStatus = granted ? "通知已允许，正在注册设备…" : "通知未允许，请到系统设置开启"
             if granted { UIApplication.shared.registerForRemoteNotifications() }
         } catch { pushStatus = "通知授权失败：\(error.localizedDescription)" }
+        #endif
     }
     func receivedPushToken(_ value: String) async {
         pushToken = value
