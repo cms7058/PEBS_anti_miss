@@ -47,6 +47,67 @@ class SafetyFlowTests(unittest.TestCase):
         self.call("POST", "/invites/accept", {"code": code}, self.other)
         return code
 
+    def request_location(self):
+        return self.call("POST", f"/elders/{self.eid}/location-request")
+
+    def test_remote_location_requires_new_correlated_capture(self):
+        self.upload()
+        self.now += 10
+        request = self.request_location()
+        self.assertEqual(request["state"], "pending")
+        self.assertEqual(self.request_location()["id"], request["id"])
+        command = self.call("GET", "/device/commands", token=self.device)
+        self.assertEqual(command["location_request"]["state"], "received")
+        payload = {"lat": 31, "lon": 121, "accuracy": 10, "recorded_at": self.now - 1,
+                   "battery": 70, "applied_version": 0, "request_id": request["id"]}
+        with self.assertRaises(APIError):
+            self.call("POST", "/device/location", payload, self.device)
+        payload["recorded_at"] = self.now + 31
+        with self.assertRaises(APIError):
+            self.call("POST", "/device/location", payload, self.device)
+        self.now += 2
+        payload["recorded_at"] = self.now
+        self.call("POST", "/device/location", payload, self.device)
+        self.assertEqual(self.elder()["location_request"]["state"], "completed")
+        self.assertEqual(self.elder()["location"]["recorded_at"], self.now)
+        self.assertIsNone(self.call("GET", "/device/commands", token=self.device)["location_request"])
+        with self.assertRaises(APIError) as ctx:
+            self.request_location()
+        self.assertEqual(ctx.exception.status, 429)
+
+    def test_remote_location_permissions_expiry_and_unpair(self):
+        with self.assertRaises(APIError):
+            self.call("POST", f"/elders/{self.eid}/location-request", token=self.stranger)
+        self.invite(False)
+        request = self.call("POST", f"/elders/{self.eid}/location-request", token=self.other)
+        self.now += 181
+        self.assertEqual(self.elder()["location_request"]["state"], "expired")
+        self.assertIsNone(self.call("GET", "/device/commands", token=self.device)["location_request"])
+        self.assertNotEqual(self.request_location()["id"], request["id"])
+        self.call("POST", "/device/unpair", token=self.device)
+        self.assertIsNone(self.elder()["location_request"])
+        with self.assertRaises(APIError): self.request_location()
+        with self.assertRaises(APIError): self.call("GET", "/device/commands", token=self.device)
+
+    def test_expired_request_cannot_be_completed_by_late_capture(self):
+        request = self.request_location()
+        self.now += 181
+        self.call("POST", "/device/location", {"lat": 31, "lon": 121, "accuracy": 10,
+            "recorded_at": self.now, "battery": 70, "applied_version": 0,
+            "request_id": request["id"]}, self.device)
+        self.assertEqual(self.elder()["location_request"]["state"], "expired")
+        self.assertIsNone(self.elder()["location_request"]["completed_at"])
+
+    def test_ordinary_upload_does_not_claim_remote_success(self):
+        self.request_location()
+        self.now += 1
+        self.upload()
+        self.assertEqual(self.elder()["location_request"]["state"], "pending")
+        with self.assertRaises(APIError):
+            self.call("POST", "/device/location", {"lat": 31, "lon": 121, "accuracy": 10,
+                "recorded_at": self.now + 1, "battery": 70, "applied_version": 0,
+                "request_id": "wrong"}, self.device)
+
     def test_pair_requires_consent_and_cannot_be_replayed(self):
         item = self.call("POST", "/elders", {"name": "爸爸"})
         with self.assertRaises(APIError):

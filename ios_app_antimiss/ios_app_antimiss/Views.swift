@@ -180,6 +180,7 @@ struct ElderView: View {
                             Text("电量 \(Int(loc.battery))% · \(loc.lat.formatted(.number.precision(.fractionLength(5)))), \(loc.lon.formatted(.number.precision(.fractionLength(5))))").font(.caption)
                             Button("在地图中查看此位置") { MKMapItem(placemark: MKPlacemark(coordinate: loc.coordinate)).openInMaps() }
                         } else { Text(elder.paired ? "等待老人手机上传位置" : "等待老人手机绑定") }
+                        RemoteLocationView(elder: elder)
                         if elder.version != elder.applied_version { Label("设置已保存，等待老人手机同步", systemImage: "arrow.triangle.2.circlepath").foregroundStyle(.orange) }
                     }
                     Section("守护设置") {
@@ -364,5 +365,23 @@ struct DataSyncStatusView: View {
             Button("立即刷新后台数据") { Task { await model.perform { try await model.refresh() } } }
                 .disabled(model.busy)
         }
+    }
+}
+
+struct RemoteLocationView: View {
+    @EnvironmentObject var model: AppModel
+    let elder: Elder
+    var body: some View {
+        Button("获取最新位置") {
+            Task { await model.perform {
+                let _: LocationRequest = try await model.request("/elders/\(elder.id)/location-request", method: "POST", body: [:])
+                try await model.refresh()
+            } }
+        }.disabled(model.busy || !elder.paired || elder.location_request?.waiting == true)
+        if let request = elder.location_request {
+            Text(request.label).font(.caption).foregroundStyle(request.state == "completed" ? Color.secondary : Color.orange)
+        }
+        Text("请求老人手机重新定位。需新版老人端开启守护，锁屏休眠可能延迟；刷新后台数据只读取已上报位置。")
+            .font(.caption).foregroundStyle(.secondary)
     }
 }

@@ -81,7 +81,7 @@ class MainActivity : Activity() {
             button("打开应用设置") { startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$packageName"))) }
             button("打开系统定位设置") { startActivity(Intent(Settings.ACTION_LOCATION_SOURCE_SETTINGS)) }
             button("打开电池优化设置") { startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)) }
-            content.addView(text("开启一次后可返回桌面、锁屏，常驻通知表示后台守护运行中。请允许精确定位、通知，并在手机应用启动管理中允许自启动、关联启动和后台活动，在电池优化中允许本应用。普通系统回收会尝试恢复；手动停止后不会恢复。重启或强制停止后需重新打开应用。", 18f))
+            content.addView(text("开启一次后可返回桌面、锁屏。无围栏和行程时通常每5分钟定位；围栏或进行中的行程约每分钟定位，取到位置后停止本次定位。后台约每30秒检查家属定位请求，休眠时可能延迟。常驻通知表示守护服务运行中。请允许精确定位、通知，并在手机应用启动管理中允许自启动、关联启动和后台活动，在电池优化中允许本应用。普通系统回收会尝试恢复；手动停止后不会恢复。重启或强制停止后需重新打开应用。", 18f))
             button("解除与家属的绑定") {
                 AlertDialog.Builder(this).setTitle("解除绑定？").setMessage("解除后已授权的家属无法继续取得本机新位置。").setPositiveButton("解除") { _, _ ->
                     prefs.edit().putBoolean("tracking_enabled", false).commit()

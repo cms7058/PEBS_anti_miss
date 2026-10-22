@@ -65,6 +65,15 @@ async function main(){
  const offline=detail.data.elder.events.find(event=>event.kind==='offline');
  await detail.ack({currentTarget:{dataset:{id:offline.id}}});
  assert.equal(detail.data.elder.events.find(event=>event.id===offline.id).handler,'mini-owner');
+ await detail.locate();assert.equal(detail.data.error,'');
+ assert.equal(detail.data.elder.location_request.state,'pending');
+ assert.equal(detail.data.elder.requestWaiting,true);
+ assert.match(detail.data.elder.requestLabel,/等待老人手机/);
+ const requestID=detail.data.elder.location_request.id;
+ await detail.locate();assert.equal(detail.data.elder.location_request.id,requestID);
+ await new Promise(resolve=>{queue.push(resolve);backend.stdin.write(JSON.stringify({advance:181})+'\n');});
+ await detail.load();assert.equal(detail.data.elder.location_request.state,'expired');
+ assert.equal(detail.data.elder.requestWaiting,false);assert.match(detail.data.elder.requestLabel,/超时/);
  detail.stop();
  const invite=await api.request(api.elderPath(eid,'/invites'),'POST',{can_edit:false});
  await api.login('mini-viewer','viewer password 123',true);await api.request('/invites/accept','POST',{code:invite.code});

@@ -43,9 +43,27 @@ struct GuardEvent: Codable, Identifiable {
     let delivery: [Delivery]
 }
 struct Member: Codable, Identifiable { let id: String; let name: String; let can_edit: Int }
+struct LocationRequest: Codable {
+    let id: String
+    let requested_at: Double
+    let expires: Double
+    let state: String
+    let completed_at: Double?
+    var waiting: Bool { ["pending", "received"].contains(state) && expires > Date().timeIntervalSince1970 }
+    var label: String {
+        if ["pending", "received"].contains(state) && !waiting { return "定位请求已超时，请确认老人手机联网并开启守护" }
+        switch state {
+        case "pending": return "等待老人手机接收请求…"
+        case "received": return "老人手机已收到请求，等待新位置…"
+        case "completed": return "本次请求已取得新位置（\(timeLabel(completed_at ?? requested_at))）"
+        default: return "定位请求已超时，请确认老人手机联网并开启守护"
+        }
+    }
+}
 struct Elder: Codable, Identifiable {
     let id: String
     let name: String
+    let location_request: LocationRequest?
     let paired: Bool
     let is_owner: Bool
     let can_edit: Bool

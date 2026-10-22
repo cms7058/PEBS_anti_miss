@@ -5,8 +5,11 @@ function position(value) {
   return `纬度 ${value.lat.toFixed(6)}，经度 ${value.lon.toFixed(6)}（WGS-84）`;
 }
 function decorate(elder) {
-  const p = elder.location;
+  const p = elder.location, request = elder.location_request;
+  const waiting = !!request && ['pending','received'].includes(request.state) && request.expires > Date.now()/1000;
+  const requestLabel = !request ? '' : waiting ? (request.state === 'pending' ? '等待老人手机接收请求…' : '老人手机已收到请求，等待新位置…') : request.state === 'completed' ? `本次已取得新位置：${time(request.completed_at)}` : '定位请求已超时，请确认老人手机联网并开启守护';
   return Object.assign({}, elder, {
+    requestWaiting: waiting, requestLabel,
     lastLabel: p ? time(p.recorded_at) : '尚未收到位置，请在老人端开启守护',
     stale: !p || Date.now()/1000-p.recorded_at > elder.settings.offline_after,
     accuracyLabel: p ? `精度约 ${Math.round(p.accuracy)} 米 · 电量 ${Math.round(p.battery)}%` : '',

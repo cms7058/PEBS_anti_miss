@@ -70,6 +70,8 @@ class Store:
           message TEXT, created REAL, location TEXT, active INTEGER DEFAULT 1,
           acknowledged_by TEXT, acknowledged_at REAL);
         CREATE UNIQUE INDEX IF NOT EXISTS active_kind ON events(elder_id,kind) WHERE active=1;
+        CREATE TABLE IF NOT EXISTS location_requests(elder_id TEXT PRIMARY KEY REFERENCES elders(id),
+          id TEXT, requested_at REAL, expires REAL, state TEXT, completed_at REAL);
         CREATE TABLE IF NOT EXISTS devices(token TEXT PRIMARY KEY, user_id TEXT REFERENCES users(id));
         CREATE TABLE IF NOT EXISTS outbox(event_id TEXT REFERENCES events(id), token TEXT,
           state TEXT DEFAULT 'pending', attempts INTEGER DEFAULT 0, next_attempt REAL DEFAULT 0,
@@ -108,10 +110,15 @@ class Store:
     def resolve(self, elder_id, kind):
         self.db.execute("UPDATE events SET active=0 WHERE elder_id=? AND kind=?", (elder_id, kind))
 
+    def location_request(self, elder_id):
+        self.db.execute("UPDATE location_requests SET state='expired' WHERE elder_id=? AND state IN ('pending','received') AND expires<=?", (elder_id, self.clock()))
+        return self.one("SELECT id,requested_at,expires,state,completed_at FROM location_requests WHERE elder_id=?", (elder_id,))
+
     def snapshot(self, elder, uid):
         result = {k: elder[k] for k in ("id", "name", "last_seen", "version", "applied_version", "created")}
         result["location"] = json.loads(elder["last_location"]) if elder["last_location"] else None
         result["settings"] = json.loads(elder["settings"])
+        result["location_request"] = self.location_request(elder["id"])
         result["paired"] = bool(elder["consent"])
         result["is_owner"] = elder["owner"] == uid
         member = self.one("SELECT can_edit FROM members WHERE elder_id=? AND user_id=?", (elder["id"], uid))
@@ -200,9 +207,18 @@ class Store:
         if path.startswith("/device/"):
             elder = self.one("SELECT * FROM elders WHERE device_token=? AND consent=1", (digest(token),))
             require(elder, "设备尚未绑定", 401)
+            if method == "GET" and path == "/device/commands":
+                request = self.location_request(elder["id"])
+                if request and request["state"] in ("pending", "received"):
+                    self.db.execute("UPDATE location_requests SET state='received' WHERE elder_id=?", (elder["id"],))
+                    request["state"] = "received"
+                else:
+                    request = None
+                return {"location_request": request, "version": elder["version"], "settings": json.loads(elder["settings"])}
             if method == "GET" and path == "/device/settings":
                 return {"version": elder["version"], "settings": json.loads(elder["settings"])}
             if method == "POST" and path == "/device/unpair":
+                self.db.execute("DELETE FROM location_requests WHERE elder_id=?", (elder["id"],))
                 self.db.execute("UPDATE elders SET consent=0,device_token=NULL WHERE id=?", (elder["id"],))
                 self.db.execute("UPDATE events SET active=0 WHERE elder_id=?", (elder["id"],))
                 return {"ok": True}
@@ -213,6 +229,12 @@ class Store:
                 number(data, "battery", 0, 100)
                 number(data, "applied_version", 0, elder["version"])
                 require(type(data["applied_version"]) is int, "无效设置版本")
+                request_id = data.get("request_id")
+                request = self.location_request(elder["id"])
+                if request_id is not None:
+                    require(request and request["id"] == request_id, "定位请求无效", 409)
+                    require(data["recorded_at"] >= request["requested_at"],
+                            "本次请求需要重新采集位置", 409)
                 previous = json.loads(elder["last_location"]) if elder["last_location"] else None
                 require(not previous or data["recorded_at"] > previous["recorded_at"], "位置时间重复或早于已保存的位置", 409)
                 loc = {k: data[k] for k in ("lat", "lon", "accuracy", "recorded_at", "battery")}
@@ -229,6 +251,8 @@ class Store:
                 else:
                     # Uncertain or low-quality samples cannot substantiate continuous outside dwell.
                     self.db.execute("UPDATE elders SET outside_since=NULL,outside_count=0 WHERE id=?", (elder["id"],))
+                if request_id and request["state"] in ("pending", "received"):
+                    self.db.execute("UPDATE location_requests SET state='completed',completed_at=? WHERE elder_id=?", (now, elder["id"]))
                 self.evaluate(self.one("SELECT * FROM elders WHERE id=?", (elder["id"],)))
                 return {"ok": True}
             raise APIError(404, "接口不存在")
@@ -270,6 +294,16 @@ class Store:
         if len(parts) == 2 and method == "GET":
             return self.snapshot(self.access(eid, uid), uid)
         action = parts[2] if len(parts) > 2 else ""
+        if action == "location-request" and method == "POST":
+            elder = self.access(eid, uid)
+            require(elder["consent"], "请先绑定老人手机", 409)
+            previous = self.location_request(eid)
+            if previous and previous["state"] in ("pending", "received"):
+                return previous
+            require(not previous or now - previous["requested_at"] >= 30, "请稍后再请求定位", 429)
+            self.db.execute("INSERT OR REPLACE INTO location_requests VALUES(?,?,?,?,?,NULL)",
+                            (eid, secrets.token_hex(12), now, now + 180, "pending"))
+            return self.location_request(eid)
         if action == "pair-code" and method == "POST":
             elder = self.access(eid, uid, owner=True)
             require(not elder["consent"], "设备已绑定，请先在老人手机解除共享", 409)

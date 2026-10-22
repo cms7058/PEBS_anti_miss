@@ -4,6 +4,8 @@
 
 2026-10-20 开发验证：Android Debug APK 已成功构建并通过签名校验；iPhone 工程已通过模拟器目标编译并在模拟器启动。具体记录见 [开发验证](docs/VERIFICATION.md)。
 
+2026-10-22：新增管理端按需定位和老人端间歇采集（APK 0.1.2）。升级步骤、响应限制及真机验收见 [按需定位说明](docs/REMOTE_LOCATION.md)。
+
 ## 已实现
 
 - Android：老人知情确认绑定、GPS / 系统网络定位、定位前台服务及常驻通知、最近同步状态、电量上报、停止共享和解除绑定。不依赖 Google Play Services。

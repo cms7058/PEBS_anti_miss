@@ -67,3 +67,13 @@
 - Debug 改用空的 FamilyGuard.Debug.entitlements，并在界面说明当前 Debug 不注册苹果推送；Release 保留原推送签名及逻辑。
 - 修改后真机签名构建通过。此前成功的模拟器/无签名构建不能证明真机描述文件权限匹配。
 - 已向连接的 iPhone 16 Pro 实际安装成功；启动仍被设备安全校验阻止，错误包含签名/描述文件未被用户信任。设备开发者模式已确认开启，需手机端检查开发者信任后再验收启动。
+
+## 2026-10-22：远程定位与间歇采集
+
+- 后端回归：`python3 -m unittest discover -s backend -p 'test_*.py'`，36项通过，包括关联请求、新采集时间、权限、合并请求、过期及旧版普通上报兼容。
+- Android：`scripts/build_android.sh` 成功；版本0.1.2 / versionCode 3；apksigner v2校验通过。
+- APK SHA-256：`fba6a8f4a1f9ee7e2482f712a380c05865fc335d8e4e75ec1920a68440b95b82`。
+- iOS：Debug模拟器通用目标 `BUILD SUCCEEDED`，未安装新版到真机。
+- 小程序：实际后端集成测试通过，覆盖定位请求合并、等待和超时显示；官方WCC/WCSC编译5个页面和共享样式通过。
+- 云端尚未部署本次更改；没有在老人手机实测锁屏收指令、持续守护或耗电。约30秒HTTP指令检查不等于推送唤醒，不保证休眠时即时响应。
+- 升级及验收步骤：见 [REMOTE_LOCATION.md](REMOTE_LOCATION.md)。

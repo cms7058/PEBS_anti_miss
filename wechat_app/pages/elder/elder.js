@@ -11,6 +11,9 @@ Page({
    this.setData(Object.assign({elder:model.decorate(elder),lastRefresh:new Date().toLocaleTimeString()},model.mapData(elder)));
  },
  refresh(){return ui.run(this,()=>this.load());},
+ locate(){return ui.run(this,async()=>{
+   await api.request(api.elderPath(this.id,'/location-request'),'POST',{});await this.load();
+ });},
  pair(){return ui.run(this,async()=>{const result=await api.request(api.elderPath(this.id,'/pair-code'),'POST',{});
    this.setData({code:result.code,expires:model.time(result.expires)});});},
  copy(){ui.copy(this.data.code);},
