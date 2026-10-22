@@ -17,7 +17,7 @@ import java.util.Date
 import java.util.Locale
 import java.util.concurrent.Executors
 
-/** Keep the service available, but activate location providers only for bounded fixes. */
+/** Bounded on-demand fixes; OS location subscriptions while automatic guard rules are active. */
 class TrackingService : Service(), LocationListener {
     private lateinit var manager: LocationManager
     private val worker = Executors.newSingleThreadExecutor()
@@ -26,7 +26,8 @@ class TrackingService : Service(), LocationListener {
     private var uploadFailures = 0
     private var lastNetworkSignal = 0L
     private var networkRegistered = false
-    private val retryUpload = Runnable { sendPending() }
+    private var retryScheduled = false
+    private val retryUpload = Runnable { retryScheduled = false; sendPending(); releaseIfIdle() }
     private val networkCallback = object : ConnectivityManager.NetworkCallback() {
         override fun onAvailable(network: Network) {
             handler.post {
@@ -42,7 +43,16 @@ class TrackingService : Service(), LocationListener {
     private val prefs by lazy { getSharedPreferences("guard", MODE_PRIVATE) }
     @Volatile private var destroyed = false
     private var foregroundReady = false
+    private val workWake by lazy {
+        getSystemService(PowerManager::class.java).newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "familyguard:location-work")
+            .apply { setReferenceCounted(false) }
+    }
+    private fun keepWorking() { if (active()) workWake.acquire(150000L) }
+    private fun releaseIfIdle() {
+        if (!syncing && (!locating || automaticSampling) && !uploading && !retryScheduled && workWake.isHeld) workWake.release()
+    }
     private var locating = false
+    private var automaticSampling = false
     private var uploading = false
     private var bestLocation: Location? = null
     private var fixStartedElapsed = 0L
@@ -50,18 +60,24 @@ class TrackingService : Service(), LocationListener {
     private var request: JSONObject? = null
     private var completedRequest = ""
     private var settings = JSONObject()
-    private val fixTimeout = Runnable {
+    private val fixTimeout: Runnable = object : Runnable {
+      override fun run() {
         val best = bestLocation
         if (best != null && active()) uploadLocation(best)
         else {
-            stopFix()
+            android.util.Log.w("FamilyGuard", "fresh fix timed out without sample")
+            if (!automaticSampling) stopFix()
+            else handler.postDelayed(this, 90000)
             update("本次未取得新位置，请检查定位权限和系统定位；家属可在超时后重试")
         }
+      }
     }
     companion object {
         private var running: TrackingService? = null
         fun signal(): Boolean {
             val service = running ?: return false
+            android.util.Log.i("FamilyGuard", "command signal received; service running")
+            service.keepWorking()
             service.handler.post { service.syncNow() }
             return true
         }
@@ -89,6 +105,7 @@ class TrackingService : Service(), LocationListener {
         if (!active()) return
         if (syncing) { syncAgain = true; return }
         syncing = true
+        keepWorking()
         handler.removeCallbacks(automaticTick)
         worker.execute {
             var error: String? = null
@@ -108,6 +125,7 @@ class TrackingService : Service(), LocationListener {
                     retryCount = 0
                     settings = result.getJSONObject("settings")
                     request = result.optJSONObject("location_request")
+                    if (locating && automaticSampling != automatic()) stopFix()
                     val pending = request?.optString("id")?.let { it != completedRequest } == true
                     if (!automatic() && !pending) {
                         if (locating) stopFix()
@@ -118,6 +136,7 @@ class TrackingService : Service(), LocationListener {
                     update("同步失败：$failure")
                     if (automatic() && !locating && !uploading && SystemClock.elapsedRealtime() >= nextFix) startFix()
                 }
+                GuardWakeReceiver.schedule(this, automatic())
                 if (syncAgain) {
                     syncAgain = false
                     handler.post(automaticTick)
@@ -127,6 +146,7 @@ class TrackingService : Service(), LocationListener {
                     // Only bounded recovery for this trigger; no idle polling.
                     handler.postDelayed(automaticTick, 20000)
                 }
+                releaseIfIdle()
             }
             if (active()) reportPushState()
         }
@@ -204,12 +224,15 @@ class TrackingService : Service(), LocationListener {
         nextFix = SystemClock.elapsedRealtime() + interval()
         bestLocation = null
         fixStartedElapsed = SystemClock.elapsedRealtime()
+        android.util.Log.i("FamilyGuard", "fresh fix started; automatic=${automatic()}; remote=${request != null}")
         locating = true
+        automaticSampling = automatic()
+        keepWorking()
         var listening = false
         for (provider in listOf(LocationManager.NETWORK_PROVIDER, LocationManager.GPS_PROVIDER)) {
             try {
                 if (manager.allProviders.contains(provider) && manager.isProviderEnabled(provider)) {
-                    manager.requestLocationUpdates(provider, 1000, 0f, this, Looper.getMainLooper())
+                    manager.requestLocationUpdates(provider, if (automaticSampling) 60000L else 1000L, 0f, this, Looper.getMainLooper())
                     listening = true
                 }
             } catch (_: Exception) { }
@@ -222,8 +245,10 @@ class TrackingService : Service(), LocationListener {
     }
     private fun stopFix() {
         locating = false
+        automaticSampling = false
         manager.removeUpdates(this)
         handler.removeCallbacks(fixTimeout)
+        releaseIfIdle()
     }
     override fun onLocationChanged(location: Location) {
         if (!active() || !locating || uploading) return
@@ -238,7 +263,13 @@ class TrackingService : Service(), LocationListener {
     }
     private fun uploadLocation(location: Location) {
         if (!active()) return
-        stopFix()
+        if (automaticSampling) {
+            // Keep OS location subscriptions while rules need monitoring. Handler timers alone
+            // cannot reliably wake a sleeping CPU; provider callbacks drive subsequent samples.
+            bestLocation = null
+            handler.removeCallbacks(fixTimeout)
+            handler.postDelayed(fixTimeout, 90000)
+        } else stopFix()
         val remote = request?.takeIf { it.optString("id") != completedRequest &&
             it.optDouble("expires") > System.currentTimeMillis()/1000.0 && location.time/1000.0 >= it.optDouble("requested_at") }
         val battery = getSystemService(BatteryManager::class.java).getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY).coerceIn(0, 100)
@@ -265,11 +296,13 @@ class TrackingService : Service(), LocationListener {
             return
         }
         handler.removeCallbacks(retryUpload)
+        retryScheduled = false
         val payload = JSONObject(stored.toString())
         val requestID = payload.optString("request_id")
         if (payload.optDouble("request_expires", 0.0) <= System.currentTimeMillis()/1000.0) payload.remove("request_id")
         payload.remove("request_expires")
         uploading = true
+        keepWorking()
         uploader.execute {
             var failure: String? = null
             try {
@@ -294,6 +327,7 @@ class TrackingService : Service(), LocationListener {
                 if (!active()) return@post
                 val same = pendingUpload?.optDouble("recorded_at") == stored.getDouble("recorded_at")
                 if (error == null) {
+                    android.util.Log.i("FamilyGuard", "location upload acknowledged")
                     if (same) { pendingUpload = null; prefs.edit().remove("pending_location").apply() }
                     if (requestID.isNotEmpty()) completedRequest = requestID
                     val time = SimpleDateFormat("HH:mm:ss", Locale.CHINA).format(Date(captured))
@@ -301,12 +335,18 @@ class TrackingService : Service(), LocationListener {
                     if (pendingUpload != null) sendPending()
                     syncNow()
                 } else {
+                    android.util.Log.w("FamilyGuard", "location upload failed; bounded retry")
                     update("已取得位置，网络上传失败：$error；正在等待重试")
                     if (!same) { sendPending(); return@post }
                     val delay = LocationPolicy.retryDelay(++uploadFailures)
-                    if (delay >= 0) handler.postDelayed(retryUpload, delay)
+                    if (delay >= 0) {
+                        retryScheduled = true
+                        keepWorking()
+                        handler.postDelayed(retryUpload, delay)
+                    }
                     // Network recovery can also retry this original capture before it expires.
                 }
+                releaseIfIdle()
             }
         }
     }
@@ -314,6 +354,7 @@ class TrackingService : Service(), LocationListener {
     override fun onProviderDisabled(provider: String) { update("定位源已关闭，请检查系统定位开关") }
     @Deprecated("Legacy callback")
     override fun onStatusChanged(provider: String?, status: Int, extras: Bundle?) {}
+    private fun activeForRecovery() = prefs.getBoolean("tracking_enabled", false) && prefs.getBoolean("push_consent", false)
     override fun onDestroy() {
         destroyed = true
         if (running === this) running = null
@@ -322,6 +363,8 @@ class TrackingService : Service(), LocationListener {
         if (networkRegistered) {
             try { getSystemService(ConnectivityManager::class.java).unregisterNetworkCallback(networkCallback) } catch (_: Exception) { }
         }
+        GuardWakeReceiver.schedule(this, activeForRecovery() && automatic())
+        if (workWake.isHeld) workWake.release()
         worker.shutdownNow()
         uploader.shutdownNow()
         super.onDestroy()

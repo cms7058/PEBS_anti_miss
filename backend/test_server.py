@@ -307,6 +307,19 @@ class SafetyFlowTests(unittest.TestCase):
         self.assertEqual(len(self.active("outside")),1)
         self.assertEqual(self.elder()["fence_status"]["state"],"outside_alert")
 
+    def test_resumed_fence_samples_reach_open_manager_alert_feed(self):
+        self.settings(fence={"lat":31,"lon":121,"radius":500})
+        self.upload()
+        # A sleeping device produces no captures; elapsed wall time alone is not crossing proof.
+        self.now += 500
+        self.s.tick()
+        self.assertFalse(self.active("outside"))
+        for offset in (0, 61, 122):
+            if offset: self.now += 61
+            self.upload(lat=31.02)
+        events = self.call("GET", "/alerts")["elders"][0]["events"]
+        self.assertEqual(len([e for e in events if e["kind"] == "outside" and e["active"]]), 1)
+
     def test_alert_feed_is_authorized_and_contains_no_current_telemetry(self):
         self.settings(fence={"lat":31,"lon":121,"radius":500})
         self.upload();self.now += 601;self.s.tick()

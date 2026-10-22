@@ -26,7 +26,7 @@ class MainActivity : Activity() {
     private lateinit var content: LinearLayout
     private val update = object : Runnable {
         override fun run() {
-            if (::status.isInitialized) status.text = (prefs.getString("status", "尚未开始守护") ?: "") + "\n" + prefs.getString("push_status", "推送尚未启用")
+            if (::status.isInitialized) status.text = (prefs.getString("status", "尚未开始守护") ?: "") + "\n" + prefs.getString("push_status", "推送尚未启用") + "\n" + backgroundStatus()
             handler.postDelayed(this, 2000)
         }
     }
@@ -77,6 +77,7 @@ class MainActivity : Activity() {
             button("停止位置共享") {
                 AlertDialog.Builder(this).setTitle("停止守护？").setMessage("停止后家属将无法获得新位置，并可能收到位置未更新提醒。").setPositiveButton("停止") { _, _ ->
                     prefs.edit().putBoolean("tracking_enabled", false).remove("pending_location").commit()
+                    GuardWakeReceiver.schedule(this, false)
                     PushManager.getInstance().turnOffPush(this)
                     stopService(Intent(this, TrackingService::class.java))
                     prefs.edit().putString("status", "位置共享已停止").apply(); status.text = "位置共享已停止"
@@ -85,11 +86,19 @@ class MainActivity : Activity() {
             }
             button("打开应用设置") { startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$packageName"))) }
             button("打开系统定位设置") { startActivity(Intent(Settings.ACTION_LOCATION_SOURCE_SETTINGS)) }
+            button("允许后台定位") { requestBackgroundLocation() }
+            button("解除电池限制") {
+                if (!GuardWakeReceiver.unrestricted(this)) {
+                    try { startActivity(Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, Uri.parse("package:$packageName"))) }
+                    catch (_: Exception) { startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)) }
+                } else status.text = "已解除系统电池限制；还需在手机启动管理中允许后台活动"
+            }
             button("打开电池优化设置") { startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)) }
-            content.addView(text("开启一次后可返回桌面、锁屏。无围栏和进行中的行程时不自动定位，只响应家属请求；围栏或进行中的行程约每分钟定位，取到位置后停止本次定位。通过个推接收家属请求，已取消30秒轮询。推送通道仍有少量通信耗电，锁屏或进程关闭可能无法响应。常驻通知表示守护服务运行中。请允许精确定位、通知，并在手机应用启动管理中允许自启动、关联启动和后台活动，在电池优化中允许本应用。普通系统回收会尝试恢复；手动停止后不会恢复。重启或强制停止后需重新打开应用。", 18f))
+            content.addView(text("开启一次后可返回桌面、锁屏。无围栏和进行中的行程时不自动定位，只响应家属请求；围栏或进行中的行程通过系统定位订阅约每分钟采集，关闭这些规则后取消订阅；自动守护比纯按需查询更耗电。通过个推接收家属请求，已取消30秒轮询。推送通道仍有少量通信耗电，锁屏或进程关闭可能无法响应。常驻通知表示守护服务运行中。请允许精确定位、通知，并在手机应用启动管理中允许自启动、关联启动和后台活动，在电池优化中允许本应用。普通系统回收会尝试恢复；手动停止后不会恢复。已授权后台定位并解除电池限制时，重启和收到推送会尝试恢复；强制停止后需重新打开应用。系统仍可能延迟唤醒，请在手机启动管理中允许后台活动。", 18f))
             button("解除与家属的绑定") {
                 AlertDialog.Builder(this).setTitle("解除绑定？").setMessage("解除后已授权的家属无法继续取得本机新位置。").setPositiveButton("解除") { _, _ ->
                     prefs.edit().putBoolean("tracking_enabled", false).remove("pending_location").commit()
+                    GuardWakeReceiver.schedule(this, false)
                     PushManager.getInstance().turnOffPush(this)
                     stopService(Intent(this, TrackingService::class.java))
                     worker.execute {
@@ -102,6 +111,21 @@ class MainActivity : Activity() {
                 }.setNegativeButton("取消", null).show()
             }
         }
+    }
+    private fun backgroundStatus(): String =
+        "后台定位：" + (if (GuardWakeReceiver.backgroundGranted(this)) "已允许" else "未允许，服务回收后不能自动恢复") +
+        "\n电池限制：" + (if (GuardWakeReceiver.unrestricted(this)) "已解除" else "未解除，息屏可能暂停联网及定位")
+    private fun requestBackgroundLocation() {
+        if (checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
+            status.text = "请先点击开始守护，允许精确定位"; return
+        }
+        if (GuardWakeReceiver.backgroundGranted(this)) { status.text = "后台定位已允许"; return }
+        AlertDialog.Builder(this).setTitle("允许息屏后的后台守护")
+            .setMessage("用于服务被系统回收后的恢复、家属主动查询及围栏监测。请将位置权限设为“始终允许”，并保留精确定位。未开启围栏或行程时仍只按需定位。")
+            .setPositiveButton("去设置") { _, _ ->
+                if (Build.VERSION.SDK_INT == 29) requestPermissions(arrayOf(Manifest.permission.ACCESS_BACKGROUND_LOCATION), 12)
+                else startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$packageName")))
+            }.setNegativeButton("暂不", null).show()
     }
     private fun startTracking() {
         if (checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
@@ -137,6 +161,7 @@ class MainActivity : Activity() {
         if (requestCode == 10 && checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED) startTracking()
         else if (requestCode == 11) {
             launchTracking()
-        } else status.text = "需要精确定位权限才能开始守护"
+        } else if (requestCode == 12) { status.text = backgroundStatus() }
+        else status.text = "需要精确定位权限才能开始守护"
     }
 }

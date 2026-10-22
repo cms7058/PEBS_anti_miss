@@ -23,13 +23,13 @@ class ElderPushReceiver : GTIntentService() {
         if (!allowed(context)) return
         context.getSharedPreferences("guard", Context.MODE_PRIVATE).edit()
             .putString("push_cid", clientid).putString("push_registration", "waiting_registration").putString("push_status", "已取得推送标识，正在登记").apply()
-        TrackingService.signal()
+        GuardWakeReceiver.resume(context)
     }
     override fun onReceiveOnlineState(context: Context, online: Boolean) {
         if (!allowed(context)) return
         context.getSharedPreferences("guard", Context.MODE_PRIVATE).edit()
             .putBoolean("push_online", online).putString("push_status", if (online) "推送通道已连接" else "推送通道断开，等待SDK重连").apply()
-        if (online) TrackingService.signal()
+        if (online) GuardWakeReceiver.resume(context)
     }
     override fun onReceiveMessageData(context: Context, message: GTTransmitMessage) {
         if (!allowed(context)) return
@@ -38,7 +38,7 @@ class ElderPushReceiver : GTIntentService() {
         val type = try { JSONObject(String(payload, Charsets.UTF_8)).optString("type") } catch (_: Exception) { return }
         if (type != "sync_commands") return
         // Only a hint: authenticate and fetch current server state, never trust payload coordinates or rules.
-        if (!TrackingService.signal()) {
+        if (!GuardWakeReceiver.resume(context)) {
             val manager = context.getSystemService(NotificationManager::class.java)
             manager.createNotificationChannel(NotificationChannel("guard_resume", "守护恢复提醒", NotificationManager.IMPORTANCE_DEFAULT))
             val open = PendingIntent.getActivity(context, 2, Intent(context, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
