@@ -75,8 +75,10 @@ class Store:
           message TEXT, created REAL, location TEXT, active INTEGER DEFAULT 1,
           acknowledged_by TEXT, acknowledged_at REAL);
         CREATE UNIQUE INDEX IF NOT EXISTS active_kind ON events(elder_id,kind) WHERE active=1;
+        CREATE TABLE IF NOT EXISTS muted_incidents(elder_id TEXT REFERENCES elders(id), kind TEXT,
+          PRIMARY KEY(elder_id,kind));
         CREATE TABLE IF NOT EXISTS location_requests(elder_id TEXT PRIMARY KEY REFERENCES elders(id),
-          id TEXT, requested_at REAL, expires REAL, state TEXT, completed_at REAL);
+          id TEXT, requested_at REAL, expires REAL, state TEXT, completed_at REAL, completion_source TEXT);
         CREATE TABLE IF NOT EXISTS elder_push_devices(elder_id TEXT PRIMARY KEY REFERENCES elders(id), cid TEXT UNIQUE, app_id TEXT);
         CREATE TABLE IF NOT EXISTS elder_outbox(elder_id TEXT REFERENCES elders(id), kind TEXT,
           generation TEXT, expires REAL, state TEXT, attempts INTEGER DEFAULT 0,
@@ -86,6 +88,9 @@ class Store:
           state TEXT DEFAULT 'pending', attempts INTEGER DEFAULT 0, next_attempt REAL DEFAULT 0,
           last_error TEXT, PRIMARY KEY(event_id,token));
         """)
+        if "completion_source" not in {r["name"] for r in self.db.execute("PRAGMA table_info(location_requests)")}:
+            with self.db:
+                self.db.execute("ALTER TABLE location_requests ADD COLUMN completion_source TEXT")
 
     def one(self, sql, args=()):
         row = self.db.execute(sql, args).fetchone()
@@ -107,6 +112,8 @@ class Store:
         return elder
 
     def event(self, elder, kind, message):
+        if self.one("SELECT 1 FROM muted_incidents WHERE elder_id=? AND kind=?", (elder["id"], kind)):
+            return
         if self.one("SELECT id FROM events WHERE elder_id=? AND kind=? AND active=1", (elder["id"], kind)):
             return
         eid = secrets.token_hex(12)
@@ -117,6 +124,7 @@ class Store:
             self.db.execute("INSERT OR IGNORE INTO outbox(event_id,token) VALUES(?,?)", (eid, d["token"]))
 
     def resolve(self, elder_id, kind):
+        self.db.execute("DELETE FROM muted_incidents WHERE elder_id=? AND kind=?", (elder_id, kind))
         self.db.execute("UPDATE events SET active=0 WHERE elder_id=? AND kind=?", (elder_id, kind))
 
     def enqueue_elder(self, elder_id, kind, ttl, generation=None):
@@ -132,7 +140,7 @@ class Store:
 
     def location_request(self, elder_id):
         self.db.execute("UPDATE location_requests SET state='expired' WHERE elder_id=? AND state IN ('pending','received') AND expires<=?", (elder_id, self.clock()))
-        return self.one("SELECT id,requested_at,expires,state,completed_at FROM location_requests WHERE elder_id=?", (elder_id,))
+        return self.one("SELECT id,requested_at,expires,state,completed_at,completion_source FROM location_requests WHERE elder_id=?", (elder_id,))
 
     def snapshot(self, elder, uid):
         result = {k: elder[k] for k in ("id", "name", "last_seen", "version", "applied_version", "created")}
@@ -226,6 +234,7 @@ class Store:
             require(elder, "绑定码无效或已过期", 404)
             # Commit the replacement only after fresh on-device consent. Issuing a code
             # leaves the currently paired phone usable until this transaction succeeds.
+            self.db.execute("DELETE FROM muted_incidents WHERE elder_id=?", (elder["id"],))
             self.db.execute("DELETE FROM elder_push_devices WHERE elder_id=?", (elder["id"],))
             self.db.execute("DELETE FROM elder_outbox WHERE elder_id=?", (elder["id"],))
             self.db.execute("DELETE FROM location_requests WHERE elder_id=?", (elder["id"],))
@@ -301,8 +310,15 @@ class Store:
                 else:
                     # Uncertain or low-quality samples cannot substantiate continuous outside dwell.
                     self.db.execute("UPDATE elders SET outside_since=NULL,outside_count=0 WHERE id=?", (elder["id"],))
-                if request_id and request["state"] in ("pending", "received"):
-                    self.db.execute("UPDATE location_requests SET state='completed',completed_at=? WHERE elder_id=?", (now, elder["id"]))
+                if (request and request["state"] in ("pending", "received")
+                        and request["requested_at"] <= loc["recorded_at"] < request["expires"]
+                        and now - loc["recorded_at"] < 120):
+                    source = "requested" if request_id == request["id"] else "automatic"
+                    self.db.execute("UPDATE location_requests SET state='completed',completed_at=?,completion_source=? WHERE elder_id=?",
+                                    (now, source, elder["id"]))
+                    # The newest valid fix answers the query even if it came from scheduled tracking.
+                    self.db.execute("UPDATE elder_outbox SET state='cancelled' WHERE elder_id=? AND kind='location' AND generation=? AND state IN ('pending','accepted')",
+                                    (elder["id"], request["id"]))
                 self.evaluate(self.one("SELECT * FROM elders WHERE id=?", (elder["id"],)))
                 return {"ok": True}
             raise APIError(404, "接口不存在")
@@ -351,7 +367,7 @@ class Store:
             if previous and previous["state"] in ("pending", "received"):
                 return previous
             require(not previous or now - previous["requested_at"] >= 30, "请稍后再请求定位", 429)
-            self.db.execute("INSERT OR REPLACE INTO location_requests VALUES(?,?,?,?,?,NULL)",
+            self.db.execute("INSERT OR REPLACE INTO location_requests(elder_id,id,requested_at,expires,state,completed_at,completion_source) VALUES(?,?,?,?,?,NULL,NULL)",
                             (eid, secrets.token_hex(12), now, now + 180, "pending"))
             pending = self.location_request(eid)
             self.enqueue_elder(eid, "location", 180, pending["id"])
@@ -404,6 +420,16 @@ class Store:
         if action == "members" and len(parts) == 4 and method == "DELETE":
             self.access(eid, uid, owner=True)
             self.db.execute("DELETE FROM members WHERE elder_id=? AND user_id=?", (eid, parts[3]))
+            return {"ok": True}
+        if action == "events" and len(parts) == 4 and method == "DELETE":
+            self.access(eid, uid, edit=True)
+            event = self.one("SELECT * FROM events WHERE id=? AND elder_id=?", (parts[3], eid))
+            require(event, "提醒不存在或已被删除", 404)
+            if event["active"]:
+                # Remember only the current incident kind, never the deleted content/location.
+                self.db.execute("INSERT OR IGNORE INTO muted_incidents VALUES(?,?)", (eid, event["kind"]))
+            self.db.execute("DELETE FROM outbox WHERE event_id=?", (event["id"],))
+            self.db.execute("DELETE FROM events WHERE id=? AND elder_id=?", (event["id"], eid))
             return {"ok": True}
         if action == "events" and len(parts) == 5 and parts[4] == "ack" and method == "POST":
             self.access(eid, uid)

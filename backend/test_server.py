@@ -69,6 +69,7 @@ class SafetyFlowTests(unittest.TestCase):
         payload["recorded_at"] = self.now
         self.call("POST", "/device/location", payload, self.device)
         self.assertEqual(self.elder()["location_request"]["state"], "completed")
+        self.assertEqual(self.elder()["location_request"]["completion_source"], "requested")
         self.assertEqual(self.elder()["location"]["recorded_at"], self.now)
         self.assertIsNone(self.call("GET", "/device/commands", token=self.device)["location_request"])
         with self.assertRaises(APIError) as ctx:
@@ -98,15 +99,81 @@ class SafetyFlowTests(unittest.TestCase):
         self.assertEqual(self.elder()["location_request"]["state"], "expired")
         self.assertIsNone(self.elder()["location_request"]["completed_at"])
 
-    def test_ordinary_upload_does_not_claim_remote_success(self):
+    def test_fresh_automatic_upload_answers_query_without_claiming_push_delivery(self):
         self.request_location()
         self.now += 1
         self.upload()
-        self.assertEqual(self.elder()["location_request"]["state"], "pending")
+        self.assertEqual(self.elder()["location_request"]["state"], "completed")
+        self.assertEqual(self.elder()["location_request"]["completion_source"], "automatic")
+        self.assertEqual(self.s.one("SELECT state FROM elder_outbox WHERE kind='location'")["state"], "cancelled")
         with self.assertRaises(APIError):
             self.call("POST", "/device/location", {"lat": 31, "lon": 121, "accuracy": 10,
                 "recorded_at": self.now + 1, "battery": 70, "applied_version": 0,
                 "request_id": "wrong"}, self.device)
+
+    def test_old_or_late_automatic_position_does_not_falsely_answer_query(self):
+        self.request_location()
+        self.now += 10
+        self.upload(age=11)
+        self.assertEqual(self.elder()["location_request"]["state"], "pending")
+        self.now += 171
+        self.upload()
+        self.assertEqual(self.elder()["location_request"]["state"], "expired")
+        self.assertEqual(self.elder()["location"]["recorded_at"], self.now)
+
+    def test_delete_event_removes_server_content_queue_and_stops_same_incident_reappearing(self):
+        self.invite(True)
+        self.settings(fence={"lat":31,"lon":121,"radius":500})
+        self.call("POST", "/push/device", {"token":"a"*64})
+        self.upload()
+        self.now += 601; self.s.tick()
+        event=self.active("offline")[0]
+        self.assertTrue(self.s.rows("SELECT * FROM outbox WHERE event_id=?",(event["id"],)))
+        self.call("DELETE", f"/elders/{self.eid}/events/{event['id']}",token=self.other)
+        self.assertIsNone(self.s.one("SELECT * FROM events WHERE id=?",(event["id"],)))
+        self.assertFalse(self.s.rows("SELECT * FROM outbox WHERE event_id=?",(event["id"],)))
+        self.assertFalse(self.elder()["events"])
+        self.s.tick()
+        self.assertFalse(self.active("offline"))
+        self.now += 1; self.upload()
+        self.now += 601; self.s.tick()
+        self.assertEqual(len(self.active("offline")),1)
+        self.assertNotEqual(self.active("offline")[0]["id"],event["id"])
+
+    def test_event_deletion_authorization_and_elder_scope(self):
+        self.invite(False)
+        self.settings(fence={"lat":31,"lon":121,"radius":500})
+        self.now += 601; self.s.tick()
+        event=self.active("offline")[0]
+        path=f"/elders/{self.eid}/events/{event['id']}"
+        for token in (self.other,self.stranger):
+            with self.assertRaises(APIError) as ctx: self.call("DELETE",path,token=token)
+            self.assertEqual(ctx.exception.status,403)
+        second=self.call("POST","/elders",{"name":"另一位"})
+        with self.assertRaises(APIError):
+            self.call("DELETE",f"/elders/{second['id']}/events/{event['id']}")
+        self.assertTrue(self.active("offline"))
+        self.now += 1; self.upload()
+        self.call("DELETE",path)
+        self.assertFalse(self.s.rows("SELECT * FROM muted_incidents"))
+        with self.assertRaises(APIError) as ctx: self.call("DELETE",path)
+        self.assertEqual(ctx.exception.status,404)
+
+    def test_location_request_schema_upgrade_preserves_existing_request(self):
+        import sqlite3, tempfile
+        from pathlib import Path
+        with tempfile.TemporaryDirectory() as folder:
+            path=Path(folder)/"legacy.sqlite3"
+            db=sqlite3.connect(str(path))
+            db.execute("CREATE TABLE location_requests(elder_id TEXT PRIMARY KEY,id TEXT,requested_at REAL,expires REAL,state TEXT,completed_at REAL)")
+            db.execute("INSERT INTO location_requests VALUES(?,?,?,?,?,?)",("old","request",self.now,self.now+180,"pending",None))
+            db.commit();db.close()
+            migrated=Store(str(path),lambda:self.now)
+            try:
+                request=migrated.location_request("old")
+                self.assertEqual(request["id"],"request")
+                self.assertIsNone(request["completion_source"])
+            finally: migrated.db.close()
 
     def test_pair_requires_consent_and_cannot_be_replayed(self):
         item = self.call("POST", "/elders", {"name": "爸爸"})

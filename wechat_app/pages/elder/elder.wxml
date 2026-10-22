@@ -7,7 +7,7 @@
    <view class="heading">最近上报位置</view><view class="{{elder.stale ? 'warning' : 'muted'}}">{{elder.lastLabel}}</view><view>{{elder.accuracyLabel}}</view>
    <map wx:if="{{hasMap}}" class="map" latitude="{{mapCenter.lat}}" longitude="{{mapCenter.lon}}" markers="{{markers}}" circles="{{circles}}" scale="14"/>
    <view class="muted selectable">{{elder.coordinateLabel}}</view><view class="muted">页面刷新：{{lastRefresh}}。页面打开期间约每 15 秒刷新。</view><button bindtap="refresh" disabled="{{busy}}">刷新后台数据</button>
-   <button bindtap="locate" disabled="{{busy || !elder.paired || elder.requestWaiting}}">获取最新位置</button>
+   <button bindtap="locate" disabled="{{busy || !elder.canRequestPosition || elder.requestWaiting}}">{{elder.requestTitle}}</button>
    <view class="muted">{{elder.requestLabel}}</view>
    <view class="muted">{{elder.pushLabel}}</view>
    <view class="muted">{{elder.modeLabel}}</view>
@@ -23,6 +23,6 @@
    <button wx:if="{{elder.is_owner}}" bindtap="members">管理授权家属</button>
   </view>
   <view class="heading">异常记录</view><view class="muted" wx:if="{{!elder.events.length}}">暂无异常记录</view>
-  <view class="card" wx:for="{{elder.events}}" wx:key="id"><view class="row"><text class="heading">{{item.message}}</text><text class="tag">{{item.active ? '异常仍在持续' : '已恢复'}}</text></view><view class="muted">{{item.timeLabel}}</view><view class="selectable">{{item.locationLabel}}</view><view wx:if="{{item.handler}}">已由 {{item.handler}} 接手</view><button wx:if="{{item.location}}" data-id="{{item.id}}" bindtap="eventMap">查看事件位置</button><button wx:if="{{item.active && !item.handler}}" data-id="{{item.id}}" bindtap="ack" disabled="{{busy}}">我来接手</button></view>
+  <view class="card" wx:for="{{elder.events}}" wx:key="id"><view class="row"><text class="heading">{{item.message}}</text><text class="tag">{{item.active ? '异常仍在持续' : '已恢复'}}</text></view><view class="muted">{{item.timeLabel}}</view><view class="selectable">{{item.locationLabel}}</view><view wx:if="{{item.handler}}">已由 {{item.handler}} 接手</view><button wx:if="{{item.location}}" data-id="{{item.id}}" bindtap="eventMap">查看事件位置</button><button wx:if="{{item.active && !item.handler}}" data-id="{{item.id}}" bindtap="ack" disabled="{{busy}}">我来接手</button><button wx:if="{{elder.can_edit}}" data-id="{{item.id}}" bindtap="deleteEvent" disabled="{{busy}}">删除此提醒</button></view>
  </view>
 </view>

@@ -24,6 +24,11 @@ Page({
  members(){wx.navigateTo({url:`/pages/members/members?id=${encodeURIComponent(this.id)}`});},
  ack(e){return ui.run(this,async()=>{if(!await ui.confirm('确认由你接手这条提醒？接手不代表异常已经恢复。'))return;
    await api.request(api.elderPath(this.id,`/events/${encodeURIComponent(e.currentTarget.dataset.id)}/ack`),'POST',{});await this.load();});},
+ deleteEvent(e){return ui.run(this,async()=>{
+   if(!await ui.confirm('从服务端删除此提醒及其记录的位置，所有家属同步移除。同一异常恢复后再次发生仍会提醒。确认删除？'))return;
+   await api.request(api.elderPath(this.id,`/events/${encodeURIComponent(e.currentTarget.dataset.id)}`),'DELETE');
+   await this.load();
+ });},
  eventMap(e){const event=this.data.elder.events.find(item=>item.id===e.currentTarget.dataset.id);
    if(!event||!event.location)return;
    const point=require('../../utils/coordinates').display(event.location.lat,event.location.lon);

@@ -159,6 +159,7 @@ struct ElderView: View {
     @State private var members = false
     @State private var pairCode: String?
     @State private var confirmRebind = false
+    @State private var deletingEvent: GuardEvent?
     @State private var camera: MapCameraPosition = .automatic
     var elder: Elder? { model.elders.first { $0.id == id } }
     var body: some View {
@@ -181,6 +182,8 @@ struct ElderView: View {
                             Text("电量 \(Int(loc.battery))% · \(loc.lat.formatted(.number.precision(.fractionLength(5)))), \(loc.lon.formatted(.number.precision(.fractionLength(5))))").font(.caption)
                             Button("在地图中查看此位置") { MKMapItem(placemark: MKPlacemark(coordinate: loc.coordinate)).openInMaps() }
                         } else { Text(elder.paired ? "等待老人手机上传位置" : "等待老人手机绑定") }
+                        Text(elder.settings.automatic ? "围栏／行程自动守护中：本页自动显示手机已上报的位置" : "按需查询模式：本页显示上次位置，点击获取才请求采集")
+                            .font(.caption).foregroundStyle(.secondary)
                         RemoteLocationView(elder: elder)
                         if elder.version != elder.applied_version { Label("设置已保存，等待老人手机同步", systemImage: "arrow.triangle.2.circlepath").foregroundStyle(.orange) }
                     }
@@ -227,6 +230,7 @@ struct ElderView: View {
                                 if let handler = event.handler { Text("\(handler) 已接手").foregroundStyle(.teal) }
                                 else { Button("我来处理") { Task { await model.perform { let _: OK = try await model.request("/elders/\(id)/events/\(event.id)/ack", method: "POST", body: [:]); try await model.refresh() } } } }
                                 if !event.delivery.isEmpty { Text(deliveryText(event.delivery)).font(.caption).foregroundStyle(.secondary) }
+                                if elder.can_edit { Button("删除此提醒", role: .destructive) { deletingEvent = event }.disabled(model.busy) }
                             }.padding(.vertical, 5)
                         }
                     }
@@ -234,6 +238,15 @@ struct ElderView: View {
                     .refreshable { do { try await model.refresh() } catch { model.error = error.localizedDescription } }
                     .sheet(item: Binding(get: { edit.map { Selection(id: $0) } }, set: { edit = $0?.id })) { mode in PlaceEditor(elder: elder, mode: mode.id) }
                     .sheet(isPresented: $members) { MembersView(id: id) }
+                    .alert("删除这条异常提醒？", isPresented: Binding(get: { deletingEvent != nil }, set: { if !$0 { deletingEvent = nil } })) {
+                        Button("删除", role: .destructive) {
+                            if let event = deletingEvent { deleteEvent(event) }
+                            deletingEvent = nil
+                        }
+                        Button("取消", role: .cancel) { deletingEvent = nil }
+                    } message: {
+                        Text("会从服务端删除此提醒及其记录的位置，所有家属同步移除。删除不改变围栏或行程；同一异常恢复后再次发生仍会提醒。")
+                    }
                     .confirmationDialog("重新绑定这位老人的手机？", isPresented: $confirmRebind, titleVisibility: .visible) {
                         Button("生成重新绑定码") { generatePairCode(replace: true) }
                         Button("取消", role: .cancel) { }
@@ -243,6 +256,12 @@ struct ElderView: View {
                     .sheet(isPresented: Binding(get: { pairCode != nil }, set: { if !$0 { pairCode = nil } })) { CodeView(title: "老人手机绑定码", code: pairCode ?? "", detail: "有效期 15 分钟，请在老人手机输入并确认。重新绑定成功后旧设备失效，已有守护设置保留。") }
             } else { ContentUnavailableView("无法查看此家人", systemImage: "person.slash", description: Text("请刷新或确认管理授权。")) }
         }
+    }
+    private func deleteEvent(_ event: GuardEvent) {
+        Task { await model.perform {
+            let _: OK = try await model.request("/elders/\(id)/events/\(event.id)", method: "DELETE")
+            try await model.refresh()
+        } }
     }
     private func generatePairCode(replace: Bool) {
         Task { await model.perform {
@@ -393,14 +412,14 @@ struct RemoteLocationView: View {
     @EnvironmentObject var model: AppModel
     let elder: Elder
     var body: some View {
-        Button("获取最新位置") {
+        Button(elder.positionRequestTitle) {
             Task { await model.perform {
                 let _: LocationRequest = try await model.request("/elders/\(elder.id)/location-request", method: "POST", body: [:])
                 try await model.refresh()
             } }
-        }.disabled(model.busy || !elder.paired || elder.location_request?.waiting == true)
-        if let request = elder.location_request {
-            Text(request.label).font(.caption).foregroundStyle(request.state == "completed" ? Color.secondary : Color.orange)
+        }.disabled(model.busy || !elder.canRequestPosition || elder.location_request?.waiting == true)
+        if let label = elder.positionRequestLabel {
+            Text(label).font(.caption).foregroundStyle(.secondary)
         }
         if let transport = elder.elder_push {
             Text(transport.label).font(.caption).foregroundStyle(.orange)

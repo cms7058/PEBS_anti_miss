@@ -60,3 +60,33 @@ sudo env HTTP_BIND_IP=0.0.0.0 docker compose -f deploy/compose.http.yaml up -d -
 ```
 
 离线Git包包含提交历史和源代码，不包含本地未跟踪的密钥或数据库。服务器的getui.env仍需单独配置。
+
+## 定位查询与自动上报、异常删除（2026-10-22后续修正）
+
+- 围栏或active行程期间自动采集是正常行为，管理端明确显示模式；无规则时继续按需查询。
+- 在请求有效期内收到、且采集时间不早于请求的新位置，会满足该次查询。`completion_source=automatic`表示自动上报，`requested`表示设备携带对应请求号返回，不混称已成功唤醒。
+- 旧位置、超时后采集的位置不冒充本次成功；晚到的新位置仍保存在地图上。界面会说明旧请求未直接响应，保留更新的位置。
+- 推送未配置且没有自动守护规则时，管理端禁用主动获取按钮。自动守护运行但推送不可用时，按钮显示“等待下一次自动位置”。
+- 主管理员及有设置修改权限的家属可删除事件。DELETE `/elders/{id}/events/{event_id}`实际删除事件、事件位置、关联推送队列。只保留不含内容和坐标的本轮异常种类关闭标记，防止同一持续异常每15秒重建；恢复后该标记清除，再次发生仍会提醒。
+- 只读家属不能删除。删除属于共享数据操作，所有家属看到的列表都会更新。不会删除老人当前定位、围栏、行程或账号。
+- 已有数据库启动时自动增加定位请求来源字段，保留旧记录。
+
+### 云端仍显示推送未配置时
+
+电脑的getui.env不随Git更新，须单独传到服务器。本次已从公网health核实云端老人推送配置为false。若云端GitHub访问失败，可在Mac终端上传离线包和已填写的配置：
+
+```sh
+scp /Users/mingyue/PEBS_anti_miss/build/deploy-transfer/PEBS_anti_miss-main.bundle /Users/mingyue/PEBS_anti_miss/deploy/getui.env ubuntu@121.4.117.45:/home/ubuntu/
+```
+
+云服务器终端：
+
+```sh
+cd ~/PEBS_anti_miss
+git pull --ff-only /home/ubuntu/PEBS_anti_miss-main.bundle main
+install -m 600 /home/ubuntu/getui.env deploy/getui.env
+sudo env HTTP_BIND_IP=0.0.0.0 docker compose -f deploy/compose.http.yaml up -d --build --wait
+curl --fail http://127.0.0.1:8087/health
+```
+
+health中elder_push_configured应为true；这只代表字段已配置，手机能否收到仍需测试。重新用Xcode安装管理端即可使用这轮修正，老人端0.1.3不需要重装。

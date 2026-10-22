@@ -7,9 +7,17 @@ function position(value) {
 function decorate(elder) {
   const p = elder.location, request = elder.location_request;
   const waiting = !!request && ['pending','received'].includes(request.state) && request.expires > Date.now()/1000;
-  const requestLabel = !request ? '' : waiting ? (request.state === 'pending' ? '等待老人手机接收请求…' : '老人手机已收到请求，等待新位置…') : request.state === 'completed' ? `本次已取得新位置：${time(request.completed_at)}` : '定位请求已超时，请确认老人手机联网并开启守护';
+  const automatic=!!elder.settings.fence || !!(elder.settings.trip && elder.settings.trip.status==='active');
+  const pushReady=!!elder.elder_push && elder.elder_push.configured && elder.elder_push.registered;
+  const canRequestPosition=elder.paired && (automatic || !elder.elder_push || pushReady);
+  let requestLabel = !request ? '' : waiting ? (request.state === 'pending' ? '等待老人手机接收请求…' : '老人手机已收到请求，等待新位置…') : request.state === 'completed' ? request.completion_source === 'automatic' ? '已收到请求后的自动上报位置' : `本次已取得新位置：${time(request.completed_at)}` : '定位请求已超时，请确认老人手机联网并开启守护';
+  if(request && request.state!=='completed') {
+    if(p && p.recorded_at>=request.requested_at) requestLabel=waiting?'已收到更新位置，正在同步请求状态':'已显示更新的位置；此前的定位请求未获得直接响应';
+    else if(waiting && automatic) requestLabel='等待请求后的新位置，自动守护上报也可满足本次查询';
+    else if(waiting && !canRequestPosition) requestLabel='远程定位通道不可用，暂未能向老人手机发送请求';
+  }
   return Object.assign({}, elder, {
-    requestWaiting: waiting, requestLabel,
+    requestWaiting: waiting, requestLabel, canRequestPosition, requestTitle: automatic && !pushReady ? '等待下一次自动位置' : '获取最新位置',
     modeLabel: elder.settings.fence || (elder.settings.trip && elder.settings.trip.status==='active') ? '自动守护：围栏或行程期间定时定位' : '按需查询：不自动定位，点击获取最新位置时请求采集',
     pushLabel: !elder.elder_push ? '' : !elder.elder_push.configured ? '老人端推送尚未配置，远程请求暂不能主动送达' : !elder.elder_push.registered ? '老人手机尚未登记推送，请安装新版并开启守护' : elder.elder_push.location_delivery && elder.elder_push.location_delivery.state === 'failed' ? '推送发送失败，请检查服务器配置' : '老人端推送已配置，手机休眠或服务停止可能影响响应',
     settingsPushFailed: !!(elder.elder_push && elder.elder_push.settings_delivery && elder.elder_push.settings_delivery.state === 'failed'),

@@ -69,13 +69,14 @@ struct LocationRequest: Codable {
     let expires: Double
     let state: String
     let completed_at: Double?
+    let completion_source: String?
     var waiting: Bool { ["pending", "received"].contains(state) && expires > Date().timeIntervalSince1970 }
     var label: String {
         if ["pending", "received"].contains(state) && !waiting { return "定位请求已超时，请确认老人手机联网并开启守护" }
         switch state {
         case "pending": return "等待老人手机接收请求…"
         case "received": return "老人手机已收到请求，等待新位置…"
-        case "completed": return "本次请求已取得新位置（\(timeLabel(completed_at ?? requested_at))）"
+        case "completed": return completion_source == "automatic" ? "已收到请求后的自动上报位置" : "本次请求已取得新位置（\(timeLabel(completed_at ?? requested_at))）"
         default: return "定位请求已超时，请确认老人手机联网并开启守护"
         }
     }
@@ -95,6 +96,23 @@ struct Elder: Codable, Identifiable {
     let settings: GuardSettings
     let members: [Member]
     let events: [GuardEvent]
+}
+extension Elder {
+    var canRequestPosition: Bool { paired && (settings.automatic || elder_push == nil || (elder_push!.configured && elder_push!.registered)) }
+    var positionRequestTitle: String {
+        if settings.automatic && !(elder_push?.configured == true && elder_push?.registered == true) { return "等待下一次自动位置" }
+        return "获取最新位置"
+    }
+    var positionRequestLabel: String? {
+        guard let request = location_request else { return nil }
+        if request.state == "completed" { return request.label }
+        if let position = location, position.recorded_at >= request.requested_at {
+            return request.waiting ? "已收到更新位置，正在同步请求状态" : "已显示更新的位置；此前的定位请求未获得直接响应"
+        }
+        if request.waiting && settings.automatic { return "等待请求后的新位置，自动守护上报也可满足本次查询" }
+        if request.waiting && !canRequestPosition { return "远程定位通道不可用，暂未能向老人手机发送请求" }
+        return request.label
+    }
 }
 struct ElderList: Codable { let elders: [Elder] }
 struct Session: Codable { let token: String; let user_id: String; let name: String }
