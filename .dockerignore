@@ -2,6 +2,7 @@
 !backend/
 !backend/__init__.py
 !backend/server.py
+!backend/elder_push.py
 !backend/wsgi.py
 !backend/requirements.txt
 !deploy/

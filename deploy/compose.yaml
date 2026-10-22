@@ -17,6 +17,9 @@ services:
     pids_limit: 128
     mem_limit: 512m
     stop_grace_period: 40s
+    env_file:
+      - path: ./getui.env
+        required: false
     environment:
       TRUST_PROXY: "1"
       TRUST_PROXY_NETWORKS: ${FAMILYGUARD_PROXY_IP:-172.30.87.2}/32

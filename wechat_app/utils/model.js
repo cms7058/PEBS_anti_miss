@@ -10,6 +10,9 @@ function decorate(elder) {
   const requestLabel = !request ? '' : waiting ? (request.state === 'pending' ? '等待老人手机接收请求…' : '老人手机已收到请求，等待新位置…') : request.state === 'completed' ? `本次已取得新位置：${time(request.completed_at)}` : '定位请求已超时，请确认老人手机联网并开启守护';
   return Object.assign({}, elder, {
     requestWaiting: waiting, requestLabel,
+    modeLabel: elder.settings.fence || (elder.settings.trip && elder.settings.trip.status==='active') ? '自动守护：围栏或行程期间定时定位' : '按需查询：不自动定位，点击获取最新位置时请求采集',
+    pushLabel: !elder.elder_push ? '' : !elder.elder_push.configured ? '老人端推送尚未配置，远程请求暂不能主动送达' : !elder.elder_push.registered ? '老人手机尚未登记推送，请安装新版并开启守护' : elder.elder_push.location_delivery && elder.elder_push.location_delivery.state === 'failed' ? '推送发送失败，请检查服务器配置' : '老人端推送已配置，手机休眠或服务停止可能影响响应',
+    settingsPushFailed: !!(elder.elder_push && elder.elder_push.settings_delivery && elder.elder_push.settings_delivery.state === 'failed'),
     lastLabel: p ? time(p.recorded_at) : '尚未收到位置，请在老人端开启守护',
     stale: !p || Date.now()/1000-p.recorded_at > elder.settings.offline_after,
     accuracyLabel: p ? `精度约 ${Math.round(p.accuracy)} 米 · 电量 ${Math.round(p.battery)}%` : '',

@@ -9,8 +9,10 @@ android {
         applicationId = "cn.familyguard.elder"
         minSdk = 26
         targetSdk = 35
-        versionCode = 3
-        versionName = "0.1.2"
+        versionCode = 4
+        versionName = "0.1.3"
+        manifestPlaceholders["GETUI_APPID"] = "NtGxfjmcjPAb27hjz2R1e1"
+        buildConfigField("String", "GETUI_APP_ID", "\"NtGxfjmcjPAb27hjz2R1e1\"")
     }
     buildFeatures { buildConfig = true }
     compileOptions {
@@ -18,4 +20,9 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
     kotlinOptions { jvmTarget = "17" }
+}
+
+dependencies {
+    implementation("com.getui:gtsdk:3.3.16.0")
+    implementation("com.getui:gtc:3.3.3.0")
 }

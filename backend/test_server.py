@@ -216,13 +216,45 @@ class SafetyFlowTests(unittest.TestCase):
         self.assertEqual(self.elder()["settings"]["trip"]["status"], "active")
         self.assertEqual(len(self.active("overdue")), 1)
 
+    def test_on_demand_mode_does_not_raise_stale_position_alarm(self):
+        self.now += 86400
+        self.s.tick()
+        self.assertFalse(self.active("offline"))
+        request = self.request_location()
+        self.assertEqual(request["state"], "pending")
+        self.now += 181
+        self.assertEqual(self.elder()["location_request"]["state"], "expired")
+        self.assertFalse(self.active("offline"))
+
+    def test_disabling_last_rule_clears_position_alarm(self):
+        self.settings(fence={"lat": 31, "lon": 121, "radius": 500})
+        self.now += 601
+        self.s.tick()
+        self.assertTrue(self.active("offline"))
+        self.settings(fence=None)
+        self.assertFalse(self.active("offline"))
+
+    def test_active_trip_requires_updates_but_arrived_trip_does_not(self):
+        self.settings(trip={"name": "公园", "lat": 31, "lon": 121, "radius": 200,
+                            "deadline": self.now + 3600, "status": "active"})
+        self.now += 601
+        self.s.tick()
+        self.assertTrue(self.active("offline"))
+        self.upload()
+        self.assertEqual(self.elder()["settings"]["trip"]["status"], "arrived")
+        self.now += 601
+        self.s.tick()
+        self.assertFalse(self.active("offline"))
+
     def test_offline_even_without_first_position_and_recovers(self):
+        self.settings(fence={"lat": 31, "lon": 121, "radius": 500})
         self.now += 601; self.s.tick()
         self.assertEqual(len(self.active("offline")), 1)
         self.upload()
         self.assertFalse(self.active("offline"))
 
     def test_replayed_location_cannot_hide_offline(self):
+        self.settings(fence={"lat": 31, "lon": 121, "radius": 500})
         self.upload()
         self.now += 700
         self.upload(age=650)
@@ -236,6 +268,7 @@ class SafetyFlowTests(unittest.TestCase):
         with self.assertRaises(APIError): self.upload(age=-31)
 
     def test_event_position_is_snapshot_and_ack_is_shared(self):
+        self.settings(fence={"lat": 31, "lon": 121, "radius": 500})
         self.invite()
         self.upload()
         self.now += 601; self.s.tick()
@@ -256,6 +289,7 @@ class SafetyFlowTests(unittest.TestCase):
         self.assertIsNone(self.elder()["location"])
 
     def test_push_pending_without_credentials_and_revocation_cancels(self):
+        self.settings(fence={"lat": 31, "lon": 121, "radius": 500})
         self.invite()
         device = "a" * 64
         self.call("POST", "/push/device", {"token": device}, self.other)
@@ -270,6 +304,7 @@ class SafetyFlowTests(unittest.TestCase):
         self.assertEqual(self.s.one("SELECT state FROM outbox")["state"], "cancelled")
 
     def test_push_acceptance_and_retry_are_not_device_delivery(self):
+        self.settings(fence={"lat": 31, "lon": 121, "radius": 500})
         self.call("POST", "/push/device", {"token": "a" * 64})
         self.now += 601; self.s.tick()
         env = dict(APNS_KEY_PATH="unused", APNS_KEY_ID="key", APNS_TEAM_ID="team", APNS_TOPIC="topic")
@@ -283,6 +318,7 @@ class SafetyFlowTests(unittest.TestCase):
         self.assertEqual(self.s.one("SELECT state FROM outbox")["state"], "accepted")
 
     def test_push_registered_after_alarm_receives_pending_event(self):
+        self.settings(fence={"lat": 31, "lon": 121, "radius": 500})
         self.now += 601; self.s.tick()
         self.call("POST", "/push/device", {"token": "a" * 64})
         self.assertEqual(len(self.s.rows("SELECT * FROM outbox")), 1)

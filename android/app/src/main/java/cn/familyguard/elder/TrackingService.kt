@@ -9,6 +9,7 @@ import android.location.LocationListener
 import android.location.LocationManager
 import android.os.*
 import org.json.JSONObject
+import com.igexin.sdk.PushManager
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -22,7 +23,6 @@ class TrackingService : Service(), LocationListener {
     private val prefs by lazy { getSharedPreferences("guard", MODE_PRIVATE) }
     @Volatile private var destroyed = false
     private var foregroundReady = false
-    private var started = false
     private var locating = false
     private var uploading = false
     private var bestLocation: Location? = null
@@ -36,35 +36,71 @@ class TrackingService : Service(), LocationListener {
         if (best != null && active()) uploadLocation(best)
         else {
             stopFix()
-            update("本次未取得新位置，稍后自动重试；请检查定位权限和系统定位")
+            update("本次未取得新位置，请检查定位权限和系统定位；家属可在超时后重试")
         }
     }
-    private val poll = object : Runnable {
-        override fun run() {
-            if (!active()) return
-            worker.execute {
-                try {
-                    val config = Api(this@TrackingService).request("/device/commands")
-                    prefs.edit().putString("settings", config.getJSONObject("settings").toString())
-                        .putInt("settings_version", config.getInt("version")).commit()
-                    handler.post {
-                        if (active()) {
-                            settings = config.getJSONObject("settings")
-                            nextFix = minOf(nextFix, SystemClock.elapsedRealtime() + interval())
-                            request = config.optJSONObject("location_request")
-                            val pending = request?.optString("id")?.let { it != completedRequest } == true
-                            if (!locating && !uploading && (pending || SystemClock.elapsedRealtime() >= nextFix)) startFix()
-                        }
+    companion object {
+        private var running: TrackingService? = null
+        fun signal(): Boolean {
+            val service = running ?: return false
+            service.handler.post { service.syncNow() }
+            return true
+        }
+    }
+    private var syncing = false
+    private var syncAgain = false
+    private var retryCount = 0
+    private val automaticTick = Runnable { syncNow() }
+    private fun syncNow() {
+        if (!active()) return
+        if (syncing) { syncAgain = true; return }
+        syncing = true
+        handler.removeCallbacks(automaticTick)
+        worker.execute {
+            var error: String? = null
+            var config: JSONObject? = null
+            try {
+                val api = Api(this)
+                val cid = prefs.getString("push_cid", "") ?: ""
+                if (cid.isNotEmpty()) {
+                    try {
+                        api.request("/device/push", JSONObject().put("cid", cid).put("app_id", BuildConfig.GETUI_APP_ID))
+                        prefs.edit().putString("push_status", "推送设备已登记，等待消息").apply()
+                    } catch (_: Exception) {
+                        prefs.edit().putString("push_status", "推送登记失败，请检查后台版本和个推AppID配置").apply()
                     }
-                } catch (e: Exception) {
-                    handler.post {
-                        if (active()) {
-                            update("指令同步失败：${e.message}；保留定时定位重试")
-                            if (!locating && !uploading && SystemClock.elapsedRealtime() >= nextFix) startFix()
-                        }
+                }
+                config = api.request("/device/commands")
+                if (active()) prefs.edit().putString("settings", config.getJSONObject("settings").toString())
+                    .putInt("settings_version", config.getInt("version")).commit()
+            } catch (e: Exception) { error = e.message ?: "连接失败" }
+            val result = config
+            val failure = error
+            handler.post {
+                syncing = false
+                if (!active()) return@post
+                if (result != null) {
+                    retryCount = 0
+                    settings = result.getJSONObject("settings")
+                    request = result.optJSONObject("location_request")
+                    val pending = request?.optString("id")?.let { it != completedRequest } == true
+                    if (!automatic() && !pending) {
+                        if (locating) stopFix()
+                        if (!uploading) update("按需定位待命中 · 不定时定位，不轮询家属请求")
                     }
-                } finally {
-                    handler.post { if (active()) handler.postDelayed(this, 30000) }
+                    if (!locating && !uploading && (pending || (automatic() && SystemClock.elapsedRealtime() >= nextFix))) startFix()
+                } else {
+                    update("同步失败：$failure")
+                    if (automatic() && !locating && !uploading && SystemClock.elapsedRealtime() >= nextFix) startFix()
+                }
+                if (syncAgain) {
+                    syncAgain = false
+                    handler.post(automaticTick)
+                } else if (automatic()) {
+                    handler.postDelayed(automaticTick, 60000)
+                } else if (failure != null && retryCount++ < 2) {
+                    // Only bounded recovery for this trigger; no idle polling.
+                    handler.postDelayed(automaticTick, 20000)
                 }
             }
         }
@@ -76,11 +112,13 @@ class TrackingService : Service(), LocationListener {
         super.onCreate()
         manager = getSystemService(LocationManager::class.java)
         getSystemService(NotificationManager::class.java).createNotificationChannel(NotificationChannel("tracking", "位置守护", NotificationManager.IMPORTANCE_LOW))
-        if (!active() || !hasPermission()) { stopSelf(); return }
+        if (!active() || !hasPermission() || !prefs.getBoolean("push_consent", false)) { stopSelf(); return }
         try {
             startForeground(1, notification("省电守护正在启动"))
             foregroundReady = true
+            running = this
             settings = JSONObject(prefs.getString("settings", "{}") ?: "{}")
+            PushManager.getInstance().initialize(applicationContext)
         } catch (_: Exception) {
             prefs.edit().putString("status", "系统未允许恢复定位，请打开应用重新开始守护").apply()
             stopSelf()
@@ -99,19 +137,13 @@ class TrackingService : Service(), LocationListener {
         if (!foregroundReady || !active() || prefs.getString("token", "").isNullOrEmpty() || !hasPermission()) {
             stopSelf(); return START_NOT_STICKY
         }
-        if (!started) {
-            started = true
-            handler.post(poll)
-        }
+        syncNow()
         return START_STICKY
     }
-    private fun interval(): Long {
-        val trip = settings.optJSONObject("trip")
-        val guarding = settings.optJSONObject("fence") != null || trip?.optString("status") == "active"
-        // Preserve <=120s sample gaps required by server fence dwell checks.
-        val normal = if (guarding) 60000L else 300000L
-        return minOf(normal, (settings.optLong("offline_after", 600) * 500).coerceAtLeast(60000))
-    }
+    private fun automatic(): Boolean = settings.optJSONObject("fence") != null ||
+        settings.optJSONObject("trip")?.optString("status") == "active"
+    // Only called for automatic guard scheduling; on-demand requests bypass the timer.
+    private fun interval(): Long = 60000L
     private fun startFix() {
         if (!active() || locating || uploading || !hasPermission()) return
         nextFix = SystemClock.elapsedRealtime() + interval()
@@ -175,7 +207,7 @@ class TrackingService : Service(), LocationListener {
                 }
             } catch (e: Exception) {
                 handler.post { update("位置同步失败：${e.message ?: "请检查网络"}") }
-            } finally { handler.post { uploading = false } }
+            } finally { handler.post { uploading = false; if (active()) syncNow() } }
         }
     }
     override fun onProviderEnabled(provider: String) { nextFix = 0 }
@@ -184,6 +216,7 @@ class TrackingService : Service(), LocationListener {
     override fun onStatusChanged(provider: String?, status: Int, extras: Bundle?) {}
     override fun onDestroy() {
         destroyed = true
+        if (running === this) running = null
         stopFix()
         handler.removeCallbacksAndMessages(null)
         worker.shutdownNow()

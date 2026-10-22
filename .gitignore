@@ -31,3 +31,6 @@ wechat_app/node_modules/
 wechat_app/miniprogram_npm/
 wechat_app/.ide/
 wechat_app/.DS_Store
+
+# Getui server credentials
+deploy/getui.env

@@ -13,6 +13,7 @@ import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlsplit
+from backend.elder_push import ElderPushWorker, configured as elder_push_configured
 
 
 class APIError(Exception):
@@ -41,6 +42,10 @@ def distance(a, b):
     lat1, lat2 = math.radians(a["lat"]), math.radians(b["lat"])
     v = math.sin((lat2 - lat1) / 2) ** 2 + math.cos(lat1) * math.cos(lat2) * math.sin(math.radians(b["lon"] - a["lon"]) / 2) ** 2
     return 6371000 * 2 * math.asin(min(1, math.sqrt(v)))
+
+
+def automatic_guard(settings):
+    return settings.get("fence") is not None or (settings.get("trip") or {}).get("status") == "active"
 
 
 def digest(value):
@@ -72,6 +77,10 @@ class Store:
         CREATE UNIQUE INDEX IF NOT EXISTS active_kind ON events(elder_id,kind) WHERE active=1;
         CREATE TABLE IF NOT EXISTS location_requests(elder_id TEXT PRIMARY KEY REFERENCES elders(id),
           id TEXT, requested_at REAL, expires REAL, state TEXT, completed_at REAL);
+        CREATE TABLE IF NOT EXISTS elder_push_devices(elder_id TEXT PRIMARY KEY REFERENCES elders(id), cid TEXT UNIQUE, app_id TEXT);
+        CREATE TABLE IF NOT EXISTS elder_outbox(elder_id TEXT REFERENCES elders(id), kind TEXT,
+          generation TEXT, expires REAL, state TEXT, attempts INTEGER DEFAULT 0,
+          next_attempt REAL DEFAULT 0, last_error TEXT, PRIMARY KEY(elder_id,kind));
         CREATE TABLE IF NOT EXISTS devices(token TEXT PRIMARY KEY, user_id TEXT REFERENCES users(id));
         CREATE TABLE IF NOT EXISTS outbox(event_id TEXT REFERENCES events(id), token TEXT,
           state TEXT DEFAULT 'pending', attempts INTEGER DEFAULT 0, next_attempt REAL DEFAULT 0,
@@ -110,6 +119,17 @@ class Store:
     def resolve(self, elder_id, kind):
         self.db.execute("UPDATE events SET active=0 WHERE elder_id=? AND kind=?", (elder_id, kind))
 
+    def enqueue_elder(self, elder_id, kind, ttl, generation=None):
+        self.db.execute("INSERT OR REPLACE INTO elder_outbox(elder_id,kind,generation,expires,state) VALUES(?,?,?,?, 'pending')",
+                        (elder_id, kind, generation or secrets.token_hex(12), self.clock() + ttl))
+
+    def elder_push_status(self, elder_id):
+        device = self.one("SELECT app_id FROM elder_push_devices WHERE elder_id=?", (elder_id,))
+        ready = bool(device and device["app_id"] == os.getenv("GETUI_APP_ID", "").strip())
+        return {"configured": elder_push_configured(), "registered": ready,
+                "location_delivery": self.one("SELECT state,last_error FROM elder_outbox WHERE elder_id=? AND kind='location'", (elder_id,)),
+                "settings_delivery": self.one("SELECT state,last_error FROM elder_outbox WHERE elder_id=? AND kind='settings'", (elder_id,))}
+
     def location_request(self, elder_id):
         self.db.execute("UPDATE location_requests SET state='expired' WHERE elder_id=? AND state IN ('pending','received') AND expires<=?", (elder_id, self.clock()))
         return self.one("SELECT id,requested_at,expires,state,completed_at FROM location_requests WHERE elder_id=?", (elder_id,))
@@ -119,6 +139,7 @@ class Store:
         result["location"] = json.loads(elder["last_location"]) if elder["last_location"] else None
         result["settings"] = json.loads(elder["settings"])
         result["location_request"] = self.location_request(elder["id"])
+        result["elder_push"] = self.elder_push_status(elder["id"])
         result["paired"] = bool(elder["consent"])
         result["is_owner"] = elder["owner"] == uid
         member = self.one("SELECT can_edit FROM members WHERE elder_id=? AND user_id=?", (elder["id"], uid))
@@ -167,7 +188,9 @@ class Store:
                 # Use location capture time, not receipt time; replayed data cannot conceal an outage.
                 loc = json.loads(elder["last_location"]) if elder["last_location"] else None
                 last = loc["recorded_at"] if loc else elder["created"]
-                if self.clock() - last > settings["offline_after"]:
+                if not automatic_guard(settings):
+                    self.resolve(elder["id"], "offline")
+                elif self.clock() - last > settings["offline_after"]:
                     self.event(elder, "offline", "手机位置长时间未更新，请联系老人确认")
                 self.evaluate(elder)
 
@@ -178,7 +201,7 @@ class Store:
     def _dispatch(self, method, path, data, token):
         now = self.clock()
         if method == "GET" and path == "/health":
-            return {"ok": True, "push_configured": all(os.getenv(k) for k in ("APNS_KEY_PATH", "APNS_KEY_ID", "APNS_TEAM_ID", "APNS_TOPIC"))}
+            return {"ok": True, "elder_push_configured": elder_push_configured(), "push_configured": all(os.getenv(k) for k in ("APNS_KEY_PATH", "APNS_KEY_ID", "APNS_TEAM_ID", "APNS_TOPIC"))}
         if method == "POST" and path in ("/auth/register", "/auth/login"):
             name, password = data.get("name", ""), data.get("password", "")
             require(isinstance(name, str) and 2 <= len(name.strip()) <= 40 and isinstance(password, str) and 10 <= len(password) <= 128, "账号需 2–40 字，密码需 10–128 字")
@@ -207,7 +230,26 @@ class Store:
         if path.startswith("/device/"):
             elder = self.one("SELECT * FROM elders WHERE device_token=? AND consent=1", (digest(token),))
             require(elder, "设备尚未绑定", 401)
+            if method == "POST" and path == "/device/push":
+                if data.get("enabled") is False:
+                    self.db.execute("DELETE FROM elder_push_devices WHERE elder_id=?", (elder["id"],))
+                    self.db.execute("UPDATE elder_outbox SET state='cancelled' WHERE elder_id=?", (elder["id"],))
+                    return {"ok": True}
+                cid, app_id = data.get("cid"), data.get("app_id")
+                require(isinstance(cid, str) and re.fullmatch(r"[A-Za-z0-9_-]{16,128}", cid), "推送设备标识无效")
+                require(app_id == os.getenv("GETUI_APP_ID", "").strip() and bool(app_id), "服务端个推 AppID 尚未配置或不匹配", 409)
+                conflict = self.one("SELECT elder_id FROM elder_push_devices WHERE cid=?", (cid,))
+                require(not conflict or conflict["elder_id"] == elder["id"], "该推送设备已绑定其他使用者", 409)
+                previous = self.one("SELECT cid FROM elder_push_devices WHERE elder_id=?", (elder["id"],))
+                self.db.execute("INSERT OR REPLACE INTO elder_push_devices VALUES(?,?,?)", (elder["id"], cid, app_id))
+                if not previous or previous["cid"] != cid:
+                    self.enqueue_elder(elder["id"], "settings", 3600)
+                    pending = self.location_request(elder["id"])
+                    if pending and pending["state"] in ("pending", "received"):
+                        self.enqueue_elder(elder["id"], "location", pending["expires"] - now, pending["id"])
+                return {"ok": True}
             if method == "GET" and path == "/device/commands":
+                self.db.execute("UPDATE elder_outbox SET state='received' WHERE elder_id=? AND expires>? AND state IN ('pending','accepted')", (elder["id"], now))
                 request = self.location_request(elder["id"])
                 if request and request["state"] in ("pending", "received"):
                     self.db.execute("UPDATE location_requests SET state='received' WHERE elder_id=?", (elder["id"],))
@@ -218,6 +260,8 @@ class Store:
             if method == "GET" and path == "/device/settings":
                 return {"version": elder["version"], "settings": json.loads(elder["settings"])}
             if method == "POST" and path == "/device/unpair":
+                self.db.execute("DELETE FROM elder_push_devices WHERE elder_id=?", (elder["id"],))
+                self.db.execute("DELETE FROM elder_outbox WHERE elder_id=?", (elder["id"],))
                 self.db.execute("DELETE FROM location_requests WHERE elder_id=?", (elder["id"],))
                 self.db.execute("UPDATE elders SET consent=0,device_token=NULL WHERE id=?", (elder["id"],))
                 self.db.execute("UPDATE events SET active=0 WHERE elder_id=?", (elder["id"],))
@@ -303,7 +347,9 @@ class Store:
             require(not previous or now - previous["requested_at"] >= 30, "请稍后再请求定位", 429)
             self.db.execute("INSERT OR REPLACE INTO location_requests VALUES(?,?,?,?,?,NULL)",
                             (eid, secrets.token_hex(12), now, now + 180, "pending"))
-            return self.location_request(eid)
+            pending = self.location_request(eid)
+            self.enqueue_elder(eid, "location", 180, pending["id"])
+            return pending
         if action == "pair-code" and method == "POST":
             elder = self.access(eid, uid, owner=True)
             require(not elder["consent"], "设备已绑定，请先在老人手机解除共享", 409)
@@ -335,8 +381,11 @@ class Store:
                         "trip": ({k: trip[k] for k in ("name", "lat", "lon", "radius", "deadline", "status")} if trip else None),
                         "outside_delay": settings["outside_delay"], "offline_after": settings["offline_after"]}
             self.db.execute("UPDATE elders SET settings=?,version=version+1,outside_since=NULL,outside_count=0 WHERE id=?", (json.dumps(settings), eid))
+            self.enqueue_elder(eid, "settings", 3600)
             self.resolve(eid, "outside")
             self.resolve(eid, "overdue")
+            if not automatic_guard(settings):
+                self.resolve(eid, "offline")
             return self.snapshot(self.one("SELECT * FROM elders WHERE id=?", (eid,)), uid)
         if action == "invites" and method == "POST":
             self.access(eid, uid, owner=True)
@@ -474,12 +523,14 @@ def main():
         raise
     Handler.store = Store(os.getenv("DATABASE_PATH", "family.sqlite3"))
     push = PushWorker(Handler.store)
+    elder_push = ElderPushWorker(Handler.store)
     stopped = threading.Event()
     def monitor():
         while not stopped.is_set():
             try:
                 Handler.store.tick()
                 push.run_once()
+                elder_push.run_once()
             except Exception as exc:
                 print("Monitor error:", type(exc).__name__, flush=True)
             stopped.wait(15)

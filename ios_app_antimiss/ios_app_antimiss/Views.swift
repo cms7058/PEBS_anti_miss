@@ -184,6 +184,11 @@ struct ElderView: View {
                         if elder.version != elder.applied_version { Label("设置已保存，等待老人手机同步", systemImage: "arrow.triangle.2.circlepath").foregroundStyle(.orange) }
                     }
                     Section("守护设置") {
+                        Text(elder.settings.automatic ? "自动守护：围栏或进行中的行程需要定时定位" : "按需查询：不自动定位；点击获取最新位置时请求采集")
+                            .font(.caption).foregroundStyle(.secondary)
+                        if elder.elder_push?.settings_delivery?.state == "failed" {
+                            Text("规则变更推送失败，请打开老人端同步规则").foregroundStyle(.orange)
+                        }
                         LabeledContent("电子围栏", value: elder.settings.fence.map { "半径 \(Int($0.radius)) 米" } ?? "未设置")
                         if let trip = elder.settings.trip {
                             LabeledContent("目的地", value: trip.name)
@@ -308,7 +313,7 @@ struct RulesView: View {
     var body: some View {
         Form {
             Section("持续越界后提醒") { Slider(value: $delay, in: 30...600, step: 30); Text("\(Int(delay)) 秒") }
-            Section("位置未更新后提醒") { Slider(value: $offline, in: 180...1800, step: 60); Text("\(Int(offline / 60)) 分钟") }
+            Section("自动守护期间位置未更新后提醒") { Slider(value: $offline, in: 180...1800, step: 60); Text("\(Int(offline / 60)) 分钟") }
             Button("保存规则") { Task { await model.perform { var s = elder.settings; s.outside_delay = delay; s.offline_after = offline; try await model.save(elder: elder, settings: s); dismiss() } } }.disabled(model.busy)
         }.navigationTitle("提醒规则").onAppear { delay = elder.settings.outside_delay; offline = elder.settings.offline_after }
     }
@@ -381,7 +386,10 @@ struct RemoteLocationView: View {
         if let request = elder.location_request {
             Text(request.label).font(.caption).foregroundStyle(request.state == "completed" ? Color.secondary : Color.orange)
         }
-        Text("请求老人手机重新定位。需新版老人端开启守护，锁屏休眠可能延迟；刷新后台数据只读取已上报位置。")
+        if let transport = elder.elder_push {
+            Text(transport.label).font(.caption).foregroundStyle(.orange)
+        }
+        Text("通过推送请求老人手机重新定位，需新版老人端开启守护。无围栏或进行中的行程时不自动定位；刷新后台数据只读取已有位置。")
             .font(.caption).foregroundStyle(.secondary)
     }
 }

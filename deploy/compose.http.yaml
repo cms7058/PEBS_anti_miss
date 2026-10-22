@@ -18,6 +18,9 @@ services:
     pids_limit: 128
     mem_limit: 512m
     stop_grace_period: 40s
+    env_file:
+      - path: ./getui.env
+        required: false
     environment:
       TRUST_PROXY: "0"
       APNS_KEY_PATH: ${APNS_KEY_PATH:-}

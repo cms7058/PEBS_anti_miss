@@ -102,7 +102,7 @@ class CloudEntryTests(unittest.TestCase):
                 live.close()
 
     def test_scheduler_file_lock_allows_only_one_monitor(self):
-        with tempfile.TemporaryDirectory() as folder, patch.dict(os.environ, {"DATABASE_PATH": folder + "/state.sqlite3"}), patch("backend.wsgi.PushWorker.run_once"):
+        with tempfile.TemporaryDirectory() as folder, patch.dict(os.environ, {"DATABASE_PATH": folder + "/state.sqlite3"}), patch("backend.wsgi.PushWorker.run_once"), patch("backend.wsgi.ElderPushWorker.run_once"):
             first_store, second_store = Mock(), Mock()
             first_tick, second_tick = threading.Event(), threading.Event()
             first_store.tick.side_effect = first_tick.set

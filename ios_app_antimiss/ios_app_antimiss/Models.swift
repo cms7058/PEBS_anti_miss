@@ -21,6 +21,7 @@ struct GuardSettings: Codable {
     var trip: Trip?
     var outside_delay: Double = 120
     var offline_after: Double = 600
+    var automatic: Bool { fence != nil || trip?.status == "active" }
 }
 struct Position: Codable {
     let lat: Double
@@ -43,6 +44,25 @@ struct GuardEvent: Codable, Identifiable {
     let delivery: [Delivery]
 }
 struct Member: Codable, Identifiable { let id: String; let name: String; let can_edit: Int }
+struct ElderPushDelivery: Codable {
+    let state: String
+    let last_error: String?
+}
+struct ElderPushStatus: Codable {
+    let configured: Bool
+    let registered: Bool
+    let location_delivery: ElderPushDelivery?
+    let settings_delivery: ElderPushDelivery?
+    var label: String {
+        if !configured { return "老人端推送尚未配置，远程请求暂不能主动送达" }
+        if !registered { return "老人手机尚未登记推送，请安装新版并开启守护" }
+        switch location_delivery?.state {
+        case "failed": return "推送发送失败，请检查服务器配置或稍后重试"
+        case "accepted": return "个推已接受指令，等待手机接收"
+        default: return "已配置老人端推送；手机休眠或停止服务可能影响响应"
+        }
+    }
+}
 struct LocationRequest: Codable {
     let id: String
     let requested_at: Double
@@ -63,6 +83,7 @@ struct LocationRequest: Codable {
 struct Elder: Codable, Identifiable {
     let id: String
     let name: String
+    let elder_push: ElderPushStatus?
     let location_request: LocationRequest?
     let paired: Bool
     let is_owner: Bool

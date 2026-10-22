@@ -9,6 +9,7 @@ import time
 from http import HTTPStatus
 from pathlib import Path
 
+from backend.elder_push import ElderPushWorker
 from backend.server import APIError, PushWorker, Store, require
 
 
@@ -48,10 +49,12 @@ class Application:
                 return
             try:
                 push = PushWorker(self.store)
+                elder_push = ElderPushWorker(self.store)
                 while not self.stopped.is_set():
                     try:
                         self.store.tick()
                         push.run_once()
+                        elder_push.run_once()
                     except Exception as exc:
                         print("Monitor error:", type(exc).__name__, flush=True)
                     self.stopped.wait(15)

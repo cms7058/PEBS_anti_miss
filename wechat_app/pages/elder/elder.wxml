@@ -9,13 +9,16 @@
    <view class="muted selectable">{{elder.coordinateLabel}}</view><view class="muted">页面刷新：{{lastRefresh}}。页面打开期间约每 15 秒刷新。</view><button bindtap="refresh" disabled="{{busy}}">刷新后台数据</button>
    <button bindtap="locate" disabled="{{busy || !elder.paired || elder.requestWaiting}}">获取最新位置</button>
    <view class="muted">{{elder.requestLabel}}</view>
+   <view class="muted">{{elder.pushLabel}}</view>
+   <view class="muted">{{elder.modeLabel}}</view>
    <view class="muted">请求老人手机重新定位。需新版老人端开启守护，锁屏休眠可能延迟；刷新后台数据只读取已上报位置。</view>
   </view>
   <view class="card" wx:if="{{elder.is_owner && !elder.paired}}"><view class="heading">绑定老人端</view><button bindtap="pair" disabled="{{busy}}">生成新的绑定码</button><view class="code selectable">{{code}}</view><view wx:if="{{code}}" class="muted">有效期至 {{expires}}</view><button wx:if="{{code}}" bindtap="copy">复制绑定码</button></view>
   <view class="card"><view class="heading">守护设置</view>
    <view>{{elder.settings.fence ? '已启用日常围栏' : '尚未设置日常围栏'}}</view>
    <view wx:if="{{elder.settings.trip}}">目的地：{{elder.settings.trip.name}} · {{elder.settings.trip.status === 'arrived' ? '已到达，等待结束行程' : '行程进行中'}}</view>
-   <view class="muted">越界持续 {{elder.settings.outside_delay}} 秒提醒；位置 {{elder.settings.offline_after}} 秒未更新提醒。行程期间暂停日常围栏。</view>
+   <view class="muted">越界持续 {{elder.settings.outside_delay}} 秒提醒；自动守护期间位置 {{elder.settings.offline_after}} 秒未更新提醒。行程期间暂停日常围栏。</view>
+   <view wx:if="{{elder.settingsPushFailed}}" class="error">规则变更推送失败，请打开老人端同步规则</view>
    <view wx:if="{{elder.can_edit}}"><button data-mode="fence" bindtap="settings">设置电子围栏</button><button data-mode="trip" bindtap="settings">指定目的地与到达时间</button><button data-mode="threshold" bindtap="settings">调整提醒时间</button><button wx:if="{{elder.settings.trip}}" bindtap="endTrip" disabled="{{busy}}">结束本次行程</button></view>
    <button wx:if="{{elder.is_owner}}" bindtap="members">管理授权家属</button>
   </view>
