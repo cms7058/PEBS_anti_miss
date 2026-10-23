@@ -10,6 +10,7 @@ import android.location.LocationManager
 import android.os.*
 import android.net.ConnectivityManager
 import android.net.Network
+import android.net.NetworkCapabilities
 import org.json.JSONObject
 import com.igexin.sdk.PushManager
 import java.text.SimpleDateFormat
@@ -28,18 +29,46 @@ class TrackingService : Service(), LocationListener {
     private val uploader = Executors.newSingleThreadExecutor()
     private var pendingUpload: JSONObject? = null
     private var uploadFailures = 0
-    private var lastNetworkSignal = 0L
+    private val networkRecovery = NetworkRecoveryPolicy()
+    private val recoverNetwork = Runnable {
+        if (active()) {
+            // Re-enable the SDK on the new default route, without stopping its process.
+            ElderPushRuntime.start(this)
+            retryCount = 0
+            lastReportSignature = ""
+            sendPending()
+            syncNow()
+        }
+    }
+    private fun scheduleNetworkRecovery() {
+        handler.removeCallbacks(recoverNetwork)
+        if (active()) handler.postDelayed(recoverNetwork, 1500)
+    }
     private var networkRegistered = false
     private var retryScheduled = false
     private val retryUpload = Runnable { retryScheduled = false; sendPending(); releaseIfIdle() }
     private val networkCallback = object : ConnectivityManager.NetworkCallback() {
         override fun onAvailable(network: Network) {
             handler.post {
-                if (active() && SystemClock.elapsedRealtime() - lastNetworkSignal > 5000) {
-                    lastNetworkSignal = SystemClock.elapsedRealtime()
-                    sendPending()
-                    syncNow()
-                }
+                if (networkRecovery.available(network)) scheduleNetworkRecovery()
+            }
+        }
+        override fun onCapabilitiesChanged(network: Network, capabilities: NetworkCapabilities) {
+            val ready = capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
+                capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
+            handler.post {
+                if (networkRecovery.capabilities(network, ready)) scheduleNetworkRecovery()
+            }
+        }
+        override fun onBlockedStatusChanged(network: Network, blocked: Boolean) {
+            handler.post {
+                if (networkRecovery.blocked(network, blocked)) scheduleNetworkRecovery()
+                if (blocked && networkRecovery.isCurrent(network)) handler.removeCallbacks(recoverNetwork)
+            }
+        }
+        override fun onLost(network: Network) {
+            handler.post {
+                if (networkRecovery.lost(network)) handler.removeCallbacks(recoverNetwork)
             }
         }
     }

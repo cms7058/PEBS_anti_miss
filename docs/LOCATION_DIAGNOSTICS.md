@@ -52,3 +52,13 @@ sudo docker compose -f deploy/compose.http.yaml exec -T backend python - --live-
 此查询替代“55分钟前SDK上报为在线”来核查当前连接状态，仍不能静默修复系统禁止联网/启动的问题。
 
 依据：[个推官方用户状态接口](https://docs.getui.com/getui/server/rest_v2/user/)。
+
+## Wi-Fi 切换到移动数据后的恢复（老人端 0.1.8）
+
+此前只在默认网络 `onAvailable` 时同步，5秒内的下一次切换可能被忽略，也没有处理稍后网络验证成功的事件。0.1.8 按网络身份合并事件，延迟1.5秒恢复：重新调用现有推送初始化/启用流程，重试缓存上传并读取命令。网络稍后通过互联网验证、或系统解除联网阻止时再触发一次恢复；旧网络的丢失回调不会取消新网络的恢复。同步失败沿用最多两次重试，不增加待机轮询或无规则时的定时定位。
+
+这修补了可确认的恢复缺口，不证明它就是某台手机离线的唯一原因。`turnOnPush` 不是保证重连成功的接口；移动网络无法访问个推/后端、服务被系统停止等情况仍需实机日志确认。旧版手机离线时无法从服务端远程应用此修复。管理端和后端无需为此更新。
+
+回归检查覆盖快速连续切换、延迟验证、重复事件、旧网络回调及解除联网阻止。APK编译通过不等同于已完成该手机的移动网络实测。
+
+依据：[Android 网络回调与验证时序](https://developer.android.com/develop/connectivity/network-ops/reading-network-state)、[个推 Android API](https://docs.getui.com/getui/mobile/android/api/)。
