@@ -31,3 +31,24 @@ sudo docker compose -f deploy/compose.http.yaml exec -T backend python - < /home
 - app_version为空或diagnostics_age_seconds很大：缺少或过期的设备报告，不能推断老人手机现在运行的版本/连接状态。
 
 没有手机日志时，不把某个代码分支当作现场根因。此工具不修改定位逻辑，不需要重新安装管理端或老人端。
+
+
+## 老人手机不在身边时：查询个推当前连接状态
+
+可使用同一工具的`--live-push`选项。在Mac重新上传更新后的脚本，然后在云端执行：
+
+```bash
+cd ~/PEBS_anti_miss
+sudo docker compose -f deploy/compose.http.yaml exec -T backend python - --live-push < /home/ubuntu/diagnose_location.py
+```
+
+不需要重建容器，也不需要操作老人手机。工具从容器已有配置中读取个推鉴权信息，从SQLite只读获取已绑定CID，调用个推官方`GET /user/status/$cid`。只返回匿名设备槽位对应的`online`/`offline`/`unknown`及是否查询成功，不输出原始接口响应、身份标识或凭据。不会调用发送推送接口，不修改任何手机设置。鉴权会按正常API流程获取临时访问凭据。
+
+- `getui_live_query.succeeded=true`且`getui_status_now=offline`：查询时该App的个推连接离线；不等同于整个手机没有互联网。
+- `getui_status_now=online`：查询时CID在线，不保证GPS已取得位置或手机已读取本次命令。
+- `getui_status_now=unknown`或`succeeded=false`：查询失败/状态不明，不能当作离线；可能是配置、API权限或云端到个推的网络问题。
+- `location_hint.last_send_failed`：最后一次发送是否记录失败；服务端仅配置了凭据不等同于每次发送成功。
+
+此查询替代“55分钟前SDK上报为在线”来核查当前连接状态，仍不能静默修复系统禁止联网/启动的问题。
+
+依据：[个推官方用户状态接口](https://docs.getui.com/getui/server/rest_v2/user/)。
