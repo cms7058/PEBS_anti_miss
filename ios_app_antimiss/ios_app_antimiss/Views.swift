@@ -173,6 +173,7 @@ struct ElderView: View {
                         GuardDashboard(elder: elder, edit: { edit = $0 }, members: { members = true },
                             pair: { if elder.paired { confirmRebind = true } else { generatePairCode(replace: false) } })
                     }.listRowInsets(EdgeInsets()).listRowBackground(Color.clear).listRowSeparator(.hidden)
+                    Section("老人手机设置") { RemoteDeviceSettingsView(elder: elder) }
                     Section("异常提醒") {
                         if let failure = model.alertsFailure { Label("提醒同步失败：\(failure)", systemImage: "exclamationmark.circle").font(.caption).foregroundStyle(.orange) }
                         if !model.pushConfigured {
@@ -401,6 +402,7 @@ struct RemoteLocationView: View {
     let elder: Elder
     @State private var queryRun = 0
     @State private var queryWaiting = false
+    @State private var queryFollowing = false
     @State private var queryMessage: String?
     private var pending: Bool { ["pending", "received"].contains(elder.location_request?.state ?? "") }
     var body: some View {
@@ -408,14 +410,15 @@ struct RemoteLocationView: View {
             queryMessage = nil
             queryRun += 1
             queryWaiting = true
+            queryFollowing = true
         } label: {
             HStack {
                 if queryWaiting { ProgressView().tint(.white) }
                 else { Image(systemName: "location.fill") }
-                Text(queryWaiting ? "正在查询 · 最多5秒" : pending ? "查询本次结果" : elder.positionRequestTitle).fontWeight(.semibold)
+                Text(queryWaiting ? "正在请求新位置…" : queryFollowing ? "正在跟进手机响应…" : pending ? "查询本次结果" : elder.positionRequestTitle).fontWeight(.semibold)
             }.frame(maxWidth: .infinity).padding(.vertical, 8)
         }.buttonStyle(.borderedProminent).controlSize(.large)
-            .disabled(model.busy || (!elder.canRequestPosition && !pending) || queryWaiting)
+            .disabled(model.busy || (!elder.canRequestPosition && !pending) || queryFollowing)
         if let message = queryMessage {
             Label(message, systemImage: "info.circle").font(.caption).foregroundStyle(.secondary)
         } else if pending && !queryWaiting {
@@ -428,50 +431,127 @@ struct RemoteLocationView: View {
             VStack(alignment: .leading, spacing: 8) {
                 if let status = elder.pushDescription { Text(status) }
                 if let diag = elder.device_diagnostics { Text("老人端 \(diag.app_version) · 状态上报于 \(timeLabel(diag.updated_at))") }
-                Text("每次查询最多等待5秒。手机离线或定位尚未完成时不会用旧位置冒充新位置；后台请求有效期间仍可查询结果。")
+                Text("5秒内先反馈进度，之后继续跟进本次请求。新位置到达后自动更新；离线或GPS冷启动不能保证5秒完成。旧位置保留原采集时间。")
             }.font(.caption).foregroundStyle(.secondary).padding(.top, 6)
         }.font(.caption).tint(.secondary)
-        // Independent UI deadline: even a stalled POST/GET cannot keep the spinner running.
-        .task(id: queryWaiting ? queryRun : nil) {
-            guard queryWaiting else { return }
+        // Fast feedback is separate from following a real request to completion.
+        .task(id: queryFollowing ? queryRun : nil) {
+            guard queryFollowing else { return }
             let run = queryRun
             do { try await Task.sleep(for: .seconds(5)) } catch { return }
-            guard queryWaiting, queryRun == run else { return }
+            guard queryFollowing, queryRun == run else { return }
             let current = model.elders.first(where: { $0.id == elder.id })?.location_request
             let state = current?.state
             if let current, !["pending", "received"].contains(current.state) {
                 queryMessage = current.label
             } else {
-            queryMessage = state == "received" ? "5秒内未取得新位置：手机已收到请求，定位仍在进行。可稍后查询结果。"
-                : state == "pending" ? "5秒内未收到手机响应。请稍后查询结果，地图仍为上次采集位置。"
-                : "5秒内未确认定位结果，请检查后台连接或稍后查询。"
+            queryMessage = state == "received" ? "手机已收到请求，定位仍在进行；新位置到达后将自动显示。"
+                : state == "pending" ? "尚未收到手机响应，正在继续跟进；地图仍为上次采集位置。"
+                : "正在确认后台请求状态，取得新位置后将自动显示。"
             }
             queryWaiting = false
         }
-        .task(id: queryWaiting ? queryRun : nil) {
-            guard queryWaiting else { return }
+        .task(id: queryFollowing ? queryRun : nil) {
+            guard queryFollowing else { return }
             let run = queryRun
             do {
                 if !pending {
-                    let _: LocationRequest = try await model.request("/elders/\(elder.id)/location-request", method: "POST", body: [:])
+                    do {
+                        let _: LocationRequest = try await model.request("/elders/\(elder.id)/location-request", method: "POST", body: [:])
+                    } catch {
+                        if Task.isCancelled { throw error }
+                        try await model.refreshElder(elder.id)
+                        guard let request = model.elders.first(where: { $0.id == elder.id })?.location_request,
+                              ["pending", "received"].contains(request.state) else { throw error }
+                    }
                     try Task.checkCancellation()
                 }
-                while !Task.isCancelled && queryWaiting && queryRun == run {
-                    try await model.refreshElder(elder.id)
+                while !Task.isCancelled && queryFollowing && queryRun == run {
+                    do { try await model.refreshElder(elder.id) }
+                    catch { if Task.isCancelled { return }; queryMessage = "后台连接暂时失败，正在继续读取同一次请求的结果。" }
                     let current = model.elders.first(where: { $0.id == elder.id })?.location_request
                     if let current, !["pending", "received"].contains(current.state) {
                         queryMessage = current.label
+                        queryFollowing = false
                         queryWaiting = false
                         return
                     }
-                    try await Task.sleep(for: .milliseconds(400))
+                    try await Task.sleep(for: .milliseconds(queryWaiting ? 400 : 2000))
                 }
             } catch {
-                guard !Task.isCancelled, queryRun == run, queryWaiting else { return }
+                guard !Task.isCancelled, queryRun == run, queryFollowing else { return }
                 queryMessage = error.localizedDescription + "；尚未确认本次定位结果。"
+                queryFollowing = false
                 queryWaiting = false
             }
         }
-        .onDisappear { queryWaiting = false }
+        .task(id: queryFollowing ? queryRun : nil) {
+            guard queryFollowing else { return }
+            do { try await Task.sleep(for: .seconds(180)) } catch { return }
+            queryMessage = "本次请求未取得新位置，请检查老人手机的联网、推送和后台权限后重试。"
+            queryFollowing = false
+            queryWaiting = false
+        }
+        .onDisappear { queryFollowing = false; queryWaiting = false }
+    }
+}
+
+
+struct RemoteDeviceSettingsView: View {
+    @EnvironmentObject var model: AppModel
+    let elder: Elder
+    @State private var interval = 60
+    @State private var notice: String?
+    private let actions = [("location", "定位权限"), ("background", "后台定位"), ("battery", "电池限制"), ("notifications", "通知权限"), ("startup", "自启动与后台活动")]
+    var body: some View {
+        DisclosureGroup("远程参数与权限检查") {
+            Picker("自动采集间隔", selection: $interval) {
+                Text("30秒 · 较频繁").tag(30)
+                Text("60秒 · 标准").tag(60)
+                Text("120秒 · 较省电").tag(120)
+            }
+            Text("仅围栏或进行中的行程启用时生效，无规则时仍按需定位。间隔越长，越界确认越慢。需老人端0.1.11及以上。").font(.caption).foregroundStyle(.secondary)
+            Button("下发采集间隔") {
+                Task { await model.perform {
+                    var settings = elder.settings
+                    settings.automatic_interval = interval
+                    try await model.save(elder: elder, settings: settings)
+                    notice = "设置已保存，等待老人手机读取并确认应用。"
+                } }
+            }.disabled(model.busy || !elder.can_edit || !elder.paired)
+            if let state = elder.device_state {
+                Text("以下为手机上报于 \(timeLabel(state.updated_at)) 的历史状态，不代表当前在线。").font(.caption).foregroundStyle(.secondary)
+                stateRow("精确定位", state.precise_location)
+                stateRow("系统定位", state.location_enabled)
+                stateRow("后台定位", state.background_location)
+                stateRow("电池限制已解除", state.battery_unrestricted)
+                stateRow("通知权限", state.notifications)
+                stateRow("系统网络辅助", state.network_location)
+                stateRow("守护开关", state.guard_enabled)
+                stateRow("守护服务运行", state.service_running)
+                Text("手机已应用间隔：\(state.automatic_interval)秒 · 设置版本 \(state.settings_version)/\(elder.version)")
+                    .font(.caption).foregroundStyle(state.settings_version == elder.version ? Color.secondary : Color.orange)
+            } else { Text("尚未收到手机权限状态，请安装老人端0.1.11及以上并打开一次。").font(.caption).foregroundStyle(.orange) }
+            Menu("发送系统设置提醒") {
+                ForEach(actions, id: \.0) { item in
+                    Button(item.1) { sendReminder(item.0) }
+                }
+            }.disabled(model.busy || !elder.can_edit || !elder.paired)
+            if let request = elder.setup_request { Text(request.label).font(.caption).foregroundStyle(.secondary) }
+            Text("只能发送提醒，系统权限需要本人在老人手机确认。自启动状态无法统一读取；手机离线或已停止共享时不能保证提醒送达。").font(.caption).foregroundStyle(.secondary)
+            if let notice { Text(notice).font(.caption).foregroundStyle(.teal) }
+            Button("刷新手机状态") { Task { await model.perform { try await model.refreshElder(elder.id) } } }.disabled(model.busy)
+        }.onAppear { interval = elder.settings.automatic_interval ?? 60 }
+    }
+    private func stateRow(_ label: String, _ enabled: Bool) -> some View {
+        HStack { Text(label); Spacer(); Label(enabled ? "已开启" : "未开启", systemImage: enabled ? "checkmark.circle.fill" : "exclamationmark.circle")
+            .foregroundStyle(enabled ? Color.teal : Color.orange) }.font(.subheadline)
+    }
+    private func sendReminder(_ action: String) {
+        Task { await model.perform {
+            let _: SetupRequest = try await model.request("/elders/\(elder.id)/setup-request", method: "POST", body: ["action": action])
+            try await model.refreshElder(elder.id)
+            notice = "提醒已提交，等待老人手机接收；未远程修改系统权限。"
+        } }
     }
 }

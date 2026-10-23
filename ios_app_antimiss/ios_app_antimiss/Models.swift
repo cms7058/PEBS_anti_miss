@@ -21,6 +21,7 @@ struct GuardSettings: Codable {
     var trip: Trip?
     var outside_delay: Double = 120
     var offline_after: Double = 600
+    var automatic_interval: Int?
     var automatic: Bool { fence != nil || trip?.status == "active" }
 }
 struct Position: Codable {
@@ -70,7 +71,8 @@ struct LocationRequest: Codable {
     let state: String
     let completed_at: Double?
     let completion_source: String?
-    var waiting: Bool { ["pending", "received"].contains(state) && expires > Date().timeIntervalSince1970 }
+    // Expiry is authoritative on the server, not the manager phone's wall clock.
+    var waiting: Bool { ["pending", "received"].contains(state) }
     var label: String {
         if ["pending", "received"].contains(state) && !waiting { return "定位请求已超时，请确认老人手机联网并开启守护" }
         switch state {
@@ -89,6 +91,33 @@ struct DeviceDiagnostics: Codable {
     let registration_state: String
     let updated_at: Double
 }
+struct RemoteDeviceState: Codable {
+    let precise_location: Bool
+    let background_location: Bool
+    let battery_unrestricted: Bool
+    let notifications: Bool
+    let location_enabled: Bool
+    let network_location: Bool
+    let guard_enabled: Bool
+    let service_running: Bool
+    let settings_version: Int
+    let automatic_interval: Int
+    let updated_at: Double
+}
+struct SetupRequest: Codable {
+    let id: String
+    let action: String
+    let state: String
+    var label: String {
+        switch state {
+        case "pending": return "提醒待手机接收（离线时无法送达）"
+        case "received": return "手机已读取，尚未确认提醒显示"
+        case "notified": return "手机已提交系统通知，等待本人确认"
+        case "opened": return "本人已打开设置；请刷新权限状态核实"
+        default: return "设置提醒已过期"
+        }
+    }
+}
 struct FenceStatus: Codable { let state: String; let message: String }
 struct AlertUpdate: Codable { let id: String; let events: [GuardEvent] }
 struct AlertUpdates: Codable { let elders: [AlertUpdate] }
@@ -97,6 +126,8 @@ struct Elder: Codable, Identifiable {
     let name: String
     let fence_status: FenceStatus?
     let device_diagnostics: DeviceDiagnostics?
+    let device_state: RemoteDeviceState?
+    let setup_request: SetupRequest?
     let elder_push: ElderPushStatus?
     let location_request: LocationRequest?
     let paired: Bool

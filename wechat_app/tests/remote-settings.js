@@ -1,0 +1,15 @@
+const assert=require('node:assert/strict');
+const model=require('../utils/model');
+const elder={id:'e',name:'test',paired:true,can_edit:true,version:5,applied_version:4,settings:{fence:{lat:31,lon:121,radius:100},trip:null,outside_delay:120,offline_after:600,automatic_interval:60},events:[],location:null};
+const original=JSON.stringify(elder);
+const saved=model.buildSettings(elder,{interval:'120'},'device');
+assert.equal(saved.settings.automatic_interval,120);
+assert.deepEqual(saved.settings.fence,elder.settings.fence);
+assert.equal(saved.version,5);
+assert.equal(JSON.stringify(elder),original);
+for(const interval of ['29','121','60.5','abc'])assert.throws(()=>model.buildSettings(elder,{interval},'device'));
+assert.deepEqual(model.decorate(elder).permissionRows,[]);
+const report={...elder,device_state:{battery_unrestricted:false,updated_at:1800000000,settings_version:4,automatic_interval:60},setup_request:{state:'opened'}};
+assert.equal(model.decorate(report).permissionRows.find(x=>x.key==='battery_unrestricted').enabled,false);
+assert.match(model.decorate(report).setupLabel,/刷新权限状态核实/);
+console.log('PASS: remote interval validation, version/fence preservation, unknown permissions and reminder-vs-grant distinction');

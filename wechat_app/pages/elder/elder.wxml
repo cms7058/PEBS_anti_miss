@@ -8,7 +8,7 @@
    <view class="location-content">
     <view class="metrics"><view><view class="metric-caption">手机电量</view><view class="metric-value">{{elder.batteryValue}}</view></view><view><view class="metric-caption">定位误差</view><view class="metric-value">{{elder.accuracyValue}}</view></view><view><view class="metric-caption">位置状态</view><view class="metric-value {{elder.stale ? 'warning' : ''}}">{{elder.stale ? '历史位置' : '已上报'}}</view></view></view>
     <view class="muted">{{elder.lastLabel}}</view>
-    <button class="primary locate-action" bindtap="locate" loading="{{queryWaiting}}" disabled="{{busy || (!elder.canRequestPosition && !elder.requestWaiting) || queryWaiting}}">{{queryWaiting ? '正在查询 · 最多5秒' : elder.requestWaiting ? '继续查询结果' : elder.requestTitle}}</button>
+    <button class="primary locate-action" bindtap="locate" loading="{{queryWaiting}}" disabled="{{busy || (!elder.canRequestPosition && !elder.requestWaiting) || queryTracking}}">{{queryWaiting ? '正在请求新位置…' : queryTracking ? '正在跟进手机响应…' : elder.requestWaiting ? '继续查询结果' : elder.requestTitle}}</button>
     <view wx:if="{{elder.requestLabel && !queryError}}" class="muted">{{elder.requestLabel}}</view>
     <view wx:if="{{queryError}}" class="notice">{{queryError}}</view>
     <view class="map-actions"><button bindtap="refresh" disabled="{{busy}}">↻ 刷新记录</button><button wx:if="{{elder.location}}" bindtap="openMap">打开地图 ↗</button></view>
@@ -28,13 +28,22 @@
    <view class="map-actions"><button wx:if="{{elder.can_edit && elder.tripActive}}" bindtap="endTrip" disabled="{{busy}}">结束行程</button><button bindtap="toggleDetails">{{showDetails ? '收起详情 ▴' : '更多设置与连接详情 ▾'}}</button></view>
    <view wx:if="{{showDetails}}" class="details-panel">
     <view class="muted">{{elder.syncLabel}} · {{elder.modeLabel}}</view><view class="muted">{{elder.pushLabel}}</view><view class="muted selectable">{{elder.coordinateLabel}}</view>
-    <view class="muted">每次最多等待5秒；后台请求有效期间可继续查询。未取得新位置时保留旧记录及其采集时间。</view>
+    <view class="muted">5秒内先反馈进度，之后继续跟进同一次请求，新位置到达后自动显示。旧位置保留原采集时间。</view>
     <view class="muted">持续越界 {{elder.settings.outside_delay}} 秒提醒；自动守护位置 {{elder.settings.offline_after}} 秒未更新提醒。</view>
     <button wx:if="{{elder.can_edit}}" data-mode="threshold" bindtap="settings">提醒规则</button>
     <button wx:if="{{elder.is_owner}}" bindtap="members">管理授权家属</button>
     <button wx:if="{{elder.is_owner}}" bindtap="pair" disabled="{{busy}}">{{elder.paired ? '重新绑定老人手机' : '获取老人手机绑定码'}}</button>
     <view wx:if="{{code}}"><view class="code selectable">{{code}}</view><view class="muted">有效期至 {{expires}}</view><button bindtap="copy">复制绑定码</button></view>
    </view>
+  </view>
+  <view class="card">
+   <view class="heading">老人手机远程设置</view>
+   <view class="muted">权限状态上报于 {{elder.deviceStateTime}}；历史上报不代表当前在线</view>
+   <view wx:for="{{elder.permissionRows}}" wx:key="key" class="row"><text>{{item.label}}</text><text class="{{item.enabled ? 'tag' : 'warning'}}">{{item.enabled ? '✓ 已开启' : '! 未开启'}}</text></view>
+   <view wx:if="{{elder.device_state}}" class="muted">手机已应用间隔 {{elder.device_state.automatic_interval}} 秒 · 设置版本 {{elder.device_state.settings_version}} / {{elder.version}}</view>
+   <view class="map-actions"><button wx:if="{{elder.can_edit}}" data-mode="device" bindtap="settings" disabled="{{busy}}">调整采集间隔</button><button wx:if="{{elder.can_edit}}" bindtap="setupReminder" disabled="{{busy || !elder.paired}}">发送设置提醒</button></view>
+   <view wx:if="{{elder.setupLabel}}" class="notice">{{elder.setupLabel}}</view>
+   <view class="muted">系统权限必须在老人手机确认；自启动状态无法统一读取。手机离线或停止共享时不能保证提醒送达。点击“刷新记录”读取新上报状态。</view>
   </view>
   <view class="error" wx:if="{{alertError}}">{{alertError}}</view>
   <view class="heading">异常记录</view><view class="muted" wx:if="{{!elder.events.length}}">暂无异常记录</view>

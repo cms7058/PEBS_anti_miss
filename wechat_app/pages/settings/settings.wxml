@@ -1,9 +1,9 @@
 <view class="page">
- <view class="title">{{mode === 'fence' ? '日常电子围栏' : mode === 'trip' ? '本次目的地' : '提醒时间'}}</view>
+ <view class="title">{{mode === 'fence' ? '日常电子围栏' : mode === 'trip' ? '本次目的地' : mode === 'device' ? '老人端定位参数' : '提醒时间'}}</view>
  <view class="error" wx:if="{{error}}">{{error}}</view>
  <button wx:if="{{conflict || !loaded}}" bindtap="reload" disabled="{{busy}}">重新载入最新设置</button>
  <view wx:if="{{loaded}}">
-  <view class="card" wx:if="{{mode !== 'threshold'}}">
+  <view class="card" wx:if="{{mode === 'fence' || mode === 'trip'}}">
    <view class="muted">点击地图选择{{mode === 'fence' ? '围栏中心' : '目的地'}}，或填写 WGS-84 经纬度。地图暂不提供地点搜索。</view>
    <map class="map" latitude="{{mapLat}}" longitude="{{mapLon}}" markers="{{markers}}" circles="{{circles}}" scale="14" bindtap="tapMap"/>
    <button bindtap="useLast" disabled="{{busy}}">使用老人最近上报位置</button>
@@ -13,9 +13,10 @@
    <view class="muted">支持按米设置范围；实际判断仍受手机定位误差影响，小半径可能无法确认到达或越界。</view>
    <view wx:if="{{mode === 'trip'}}"><view class="label">目的地名称</view><input value="{{form.name}}" data-field="name" maxlength="100" bindinput="input" disabled="{{busy}}"/><view class="label">预计多少分钟后到达</view><input type="number" value="{{form.minutes}}" data-field="minutes" bindinput="input" disabled="{{busy}}"/></view>
   </view>
+  <view class="card" wx:elif="{{mode === 'device'}}"><view class="label">自动采集间隔（30–120秒整数）</view><input type="number" value="{{form.interval}}" data-field="interval" bindinput="input" disabled="{{busy}}"/><view class="muted">仅围栏或进行中的行程时生效，无规则时仍按需定位。间隔越长，越界确认越慢；需要老人端0.1.11及以上。</view></view>
   <view class="card" wx:else><view class="label">持续越界后提醒（秒，30–1800）</view><input type="number" value="{{form.outside}}" data-field="outside" bindinput="input" disabled="{{busy}}"/><view class="label">位置未更新后提醒（秒，180–3600）</view><input type="number" value="{{form.offline}}" data-field="offline" bindinput="input" disabled="{{busy}}"/></view>
   <button class="primary" bindtap="save" loading="{{busy}}" disabled="{{busy || conflict}}">{{mode === 'trip' ? '确认并开始行程' : '保存设置'}}</button>
   <button wx:if="{{mode === 'fence'}}" class="danger" bindtap="remove" disabled="{{busy || conflict}}">关闭日常围栏</button>
-  <view class="muted">保存到后台后，还需老人端在下一次位置上报时确认同步。</view>
+  <view class="muted">保存到后台后，仍需老人端收到推送并确认应用；手机离线时不会立即生效。</view>
  </view>
 </view>

@@ -49,24 +49,24 @@ async function main(){
  // Hide cancels timers; returning after the original budget does not restart a 3min spinner.
  reset();p=page();await p.locate();p.onHide();assert.equal(jobs.size,0);await tick(30000);
  p.onShow();await settle();assert.equal(p.data.queryWaiting,false);assert.equal(postCount,1);
- complete();await p.locate();assert.equal(postCount,1);assert.equal(p.data.elder.location_request.state,'completed');p.stop();
+ assert.equal(p.data.queryTracking,true);complete();await tick(2000);assert.equal(postCount,1);assert.equal(p.data.elder.location_request.state,'completed');p.stop();
  // Pending requests can be read without resending and server expiry stays authoritative.
  reset();state.location_request={...request,state:'received'};p=page();p.onShow();await settle();
  assert.equal(p.data.queryWaiting,true);assert.equal(postCount,0);
  state.location_request={...request,state:'expired'};await tick(400);
  assert.equal(p.data.queryWaiting,false);assert.match(p.data.elder.requestLabel,/超时/);p.stop();
- // A stalled POST must release UI at exactly 5 seconds, and late response cannot revive it.
+ // At 5s replace the spinner with progress, then auto-display a later successful fix.
  reset();p=page();let release;
  api.request=(path,method,...rest)=>method==='POST'?new Promise(resolve=>{postCount++;release=resolve;}):normalRequest(path,method,...rest);
  const hungPost=p.locate();await settle();assert.equal(p.data.queryWaiting,true);
  await tick(4999);assert.equal(p.data.queryWaiting,true);await tick(1);
- assert.equal(p.data.queryWaiting,false);assert.equal(p.data.busy,false);assert.match(p.data.queryError,/5秒/);
- release({...request});await hungPost;assert.equal(p.data.queryWaiting,false);assert.equal(jobs.size,0);p.stop();api.request=normalRequest;
+ assert.equal(p.data.queryWaiting,false);assert.equal(p.data.busy,false);assert.match(p.data.queryError,/继续|确认/);
+ state.location_request={...request};release({...request});await hungPost;assert.equal(p.data.queryWaiting,false);assert.equal(p.data.queryTracking,true);complete();await tick(2000);assert.equal(p.data.elder.location_request.state,'completed');p.stop();api.request=normalRequest;
  // A stalled result GET cannot hold the spinner or overwrite a later manual snapshot.
  reset();p=page();await p.locate();readOverride=()=>new Promise(resolve=>{release=resolve;});
  // Fire the poll without awaiting its deliberately suspended request.
  now+=400;const due=[...jobs].find(([,job])=>job.at<=now);jobs.delete(due[0]);const inFlight=due[1].fn();await settle();
- await tick(4600);assert.equal(p.data.queryWaiting,false);assert.match(p.data.queryError,/5秒/);
+ await tick(4600);assert.equal(p.data.queryWaiting,false);assert.match(p.data.queryError,/继续|确认/);
  readOverride=null;complete();await p.refresh();release({...fixture(),location_request:{...request}});await inFlight;
  assert.equal(p.data.elder.location_request.state,'completed');assert.equal(p.data.queryWaiting,false);p.stop();
  // Phone receipt without a fix is distinguished from no command receipt.
@@ -77,23 +77,30 @@ async function main(){
  readOverride=()=>{if(!failed){failed=true;throw new Error('一次网络抖动');}complete();return JSON.parse(JSON.stringify(state));};
  await p.locate();assert.equal(p.data.queryWaiting,true);await tick(400);
  assert.equal(p.data.elder.location_request.state,'completed');assert.equal(p.data.queryError,'');p.stop();
- // Repeated read failures end at the local deadline without fabricating device expiry.
+ // Transient failure beyond 5s must not discard a later result or fabricate expiry.
  reset();p=page();await p.locate();readOverride=()=>{throw new Error('后台连接超时');};await tick(400);
  assert.equal(p.data.queryWaiting,true);await tick(4600);assert.equal(p.data.queryWaiting,false);
- assert.equal(p.data.elder.location_request.state,'pending');assert.equal(jobs.size,0);p.stop();
+ assert.equal(p.data.elder.location_request.state,'pending');assert.equal(p.data.queryTracking,true);readOverride=null;complete();await tick(2000);assert.equal(p.data.elder.location_request.state,'completed');p.stop();
  // Pull-to-refresh while busy is safe; manually racing a poll does not cancel its budget.
  reset();p=page();p.data.busy=true;p.onPullDownRefresh();await settle();p.data.busy=false;await p.locate();
  readOverride=()=>new Promise(resolve=>{release=resolve;});now+=400;
  const job=[...jobs].find(([,item])=>item.at<=now);jobs.delete(job[0]);const race=job[1].fn();await settle();
  readOverride=null;await p.refresh();release({...state});await race;
  assert.equal(p.data.queryWaiting,true);complete();await tick(400);assert.equal(p.data.elder.location_request.state,'completed');p.stop();
+ // The core regression: a fresh fix arriving AFTER five seconds is displayed without another tap.
+ reset();p=page();await p.locate();await tick(5000);
+ assert.equal(p.data.queryWaiting,false);assert.equal(p.data.queryTracking,true);assert.equal(postCount,1);
+ complete();await tick(2000);assert.equal(p.data.elder.location_request.state,'completed');assert.equal(p.data.queryTracking,false);assert.equal(postCount,1);p.stop();
+ // A truly expired server request ends following; there is no permanent polling.
+ reset();p=page();await p.locate();await tick(5000);state.location_request={...request,state:'expired'};await tick(2000);
+ assert.equal(p.data.queryTracking,false);assert.equal(jobs.size,0);p.stop();
  // Raw wx.request errors are classified without exposing full URLs or credentials.
  api.request=original.request;
  for(const [errMsg,expected] of [['request:fail timeout',/后台连接超时/],['request:fail url not in domain list',/微信拦截/],['request:fail network unavailable',/不代表老人手机定位超时/]]){
   wx.request=options=>options.fail({errMsg});
   await assert.rejects(()=>api.request('/health','GET',undefined,false),expected);
  }
- console.log('PASS: 5s POST/GET deadlines, rapid completion, receipt states, no fake expiry, clock skew, hide/show, lost POST recovery, stale responses and refresh races');
+ console.log('PASS: progress at 5s, later fixes auto-display, same request tracking, transient recovery, true expiry, lifecycle, stale responses and refresh races');
 }
 main().catch(error=>{console.error(error);process.exitCode=1;}).finally(()=>{
  api.request=original.request;api.session=original.session;global.setTimeout=original.setTimeout;global.clearTimeout=original.clearTimeout;

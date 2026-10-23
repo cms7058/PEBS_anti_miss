@@ -122,7 +122,7 @@ class TrackingService : Service(), LocationListener {
       }
     }
     companion object {
-        private var running: TrackingService? = null
+        @Volatile private var running: TrackingService? = null
         fun isRunning(): Boolean = running?.let { it.foregroundReady && it.active() } == true
         fun signal(): Boolean {
             val service = running ?: return false
@@ -173,12 +173,14 @@ class TrackingService : Service(), LocationListener {
                 if (!active()) return@post
                 if (result != null) {
                     retryCount = 0
+                    val previousInterval = interval()
                     settings = result.getJSONObject("settings")
+                    DeviceSettings.receive(this, result.optJSONObject("setup_request"))
                     val previousRequestID = request?.optString("id") ?: ""
                     request = result.optJSONObject("location_request")
                     val pending = hasPendingRequest()
                     val restart = LocationPolicy.restartFix(locating, automaticSampling, automatic(), requestSampling,
-                        pending, previousRequestID, request?.optString("id") ?: "")
+                        pending, previousRequestID, request?.optString("id") ?: "") || (locating && automaticSampling && previousInterval != interval())
                     if (restart) stopFix()
                     if (!automatic() && !pending) {
                         if (locating) stopFix()
@@ -194,7 +196,7 @@ class TrackingService : Service(), LocationListener {
                     syncAgain = false
                     handler.post(automaticTick)
                 } else if (automatic()) {
-                    handler.postDelayed(automaticTick, 60000)
+                    handler.postDelayed(automaticTick, interval())
                 } else if (failure != null && retryCount++ < 2) {
                     // Only bounded recovery for this trigger; no idle polling.
                     handler.postDelayed(automaticTick, 20000)
@@ -206,7 +208,8 @@ class TrackingService : Service(), LocationListener {
     }
     private fun reportPushStateAsync() {
         val signature = listOf(prefs.getString("push_cid", ""), prefs.getString("push_registration", ""),
-            prefs.getBoolean("push_online", false)).joinToString(":")
+            prefs.getBoolean("push_online", false), DeviceSettings.collect(this).toString(),
+            prefs.getString("setup_id", ""), prefs.getString("setup_state", "")).joinToString(":")
         val now = SystemClock.elapsedRealtime()
         if (!active() || reporting || (signature == lastReportSignature && now - lastReport < 300000)) return
         reporting = true
@@ -214,10 +217,11 @@ class TrackingService : Service(), LocationListener {
         lastReportSignature = signature
         metadata.execute {
             try { if (active()) reportPushState() }
-            finally { handler.post { reporting = false } }
+            finally { handler.post { reporting = false; if (active()) reportPushStateAsync() } }
         }
     }
     private fun reportPushState() {
+        DeviceSettings.report(this)
         try {
             val api = Api(this)
             ElderPushRuntime.cacheCID(this)
@@ -284,7 +288,7 @@ class TrackingService : Service(), LocationListener {
     private fun automatic(): Boolean = settings.optJSONObject("fence") != null ||
         settings.optJSONObject("trip")?.optString("status") == "active"
     // Only called for automatic guard scheduling; on-demand requests bypass the timer.
-    private fun interval(): Long = 60000L
+    private fun interval(): Long = settings.optInt("automatic_interval", 60).coerceIn(30, 120) * 1000L
     private fun hasPendingRequest(): Boolean = request?.let {
         LocationPolicy.pendingRequest(it.optString("id"), completedRequest, it.optDouble("expires", 0.0), System.currentTimeMillis()/1000.0)
     } ?: false
@@ -307,7 +311,7 @@ class TrackingService : Service(), LocationListener {
         for (provider in listOf(LocationManager.NETWORK_PROVIDER, LocationManager.GPS_PROVIDER)) {
             try {
                 if (manager.allProviders.contains(provider) && manager.isProviderEnabled(provider)) {
-                    manager.requestLocationUpdates(provider, LocationPolicy.sampleInterval(automaticSampling, requestSampling), 0f, this, Looper.getMainLooper())
+                    manager.requestLocationUpdates(provider, if (automaticSampling && !requestSampling) interval() else 1000L, 0f, this, Looper.getMainLooper())
                     listening = true
                 }
             } catch (_: Exception) { }

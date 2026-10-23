@@ -86,6 +86,9 @@ class Store:
         CREATE TABLE IF NOT EXISTS elder_diagnostics(elder_id TEXT PRIMARY KEY REFERENCES elders(id),
           app_version TEXT,push_consent INTEGER,cid_available INTEGER,sdk_online INTEGER,registration_state TEXT,updated_at REAL);
         CREATE TABLE IF NOT EXISTS elder_push_devices(elder_id TEXT PRIMARY KEY REFERENCES elders(id), cid TEXT UNIQUE, app_id TEXT);
+        CREATE TABLE IF NOT EXISTS elder_device_state(elder_id TEXT PRIMARY KEY REFERENCES elders(id), payload TEXT, updated_at REAL);
+        CREATE TABLE IF NOT EXISTS elder_setup_requests(elder_id TEXT PRIMARY KEY REFERENCES elders(id), id TEXT,
+          action TEXT, requested_at REAL, expires REAL, state TEXT);
         CREATE TABLE IF NOT EXISTS elder_outbox(elder_id TEXT REFERENCES elders(id), kind TEXT,
           generation TEXT, expires REAL, state TEXT, attempts INTEGER DEFAULT 0,
           next_attempt REAL DEFAULT 0, last_error TEXT, PRIMARY KEY(elder_id,kind));
@@ -149,6 +152,10 @@ class Store:
         self.db.execute("UPDATE location_requests SET state='expired' WHERE elder_id=? AND state IN ('pending','received') AND expires<=?", (elder_id, self.clock()))
         return self.one("SELECT id,requested_at,expires,state,completed_at,completion_source FROM location_requests WHERE elder_id=?", (elder_id,))
 
+    def setup_request(self, elder_id):
+        self.db.execute("UPDATE elder_setup_requests SET state='expired' WHERE elder_id=? AND expires<=? AND state!='opened'", (elder_id, self.clock()))
+        return self.one("SELECT id,action,requested_at,expires,state FROM elder_setup_requests WHERE elder_id=?", (elder_id,))
+
     def snapshot(self, elder, uid):
         result = {k: elder[k] for k in ("id", "name", "last_seen", "version", "applied_version", "created")}
         result["location"] = json.loads(elder["last_location"]) if elder["last_location"] else None
@@ -160,6 +167,9 @@ class Store:
             for key in ("push_consent", "cid_available", "sdk_online"):
                 diag[key] = bool(diag[key]) if diag[key] is not None else None
         result["device_diagnostics"] = diag
+        state = self.one("SELECT payload,updated_at FROM elder_device_state WHERE elder_id=?", (elder["id"],))
+        result["device_state"] = dict(json.loads(state["payload"]), updated_at=state["updated_at"]) if state else None
+        result["setup_request"] = self.setup_request(elder["id"])
         result["paired"] = bool(elder["consent"])
         result["is_owner"] = elder["owner"] == uid
         member = self.one("SELECT can_edit FROM members WHERE elder_id=? AND user_id=?", (elder["id"], uid))
@@ -276,6 +286,8 @@ class Store:
             # Commit the replacement only after fresh on-device consent. Issuing a code
             # leaves the currently paired phone usable until this transaction succeeds.
             self.db.execute("DELETE FROM elder_diagnostics WHERE elder_id=?", (elder["id"],))
+            self.db.execute("DELETE FROM elder_device_state WHERE elder_id=?", (elder["id"],))
+            self.db.execute("DELETE FROM elder_setup_requests WHERE elder_id=?", (elder["id"],))
             self.db.execute("DELETE FROM muted_incidents WHERE elder_id=?", (elder["id"],))
             self.db.execute("DELETE FROM elder_push_devices WHERE elder_id=?", (elder["id"],))
             self.db.execute("DELETE FROM elder_outbox WHERE elder_id=?", (elder["id"],))
@@ -287,6 +299,23 @@ class Store:
         if path.startswith("/device/"):
             elder = self.one("SELECT * FROM elders WHERE device_token=? AND consent=1", (digest(token),))
             require(elder, "设备尚未绑定", 401)
+            if method == "POST" and path == "/device/state":
+                fields = ("precise_location", "background_location", "battery_unrestricted", "notifications", "location_enabled", "network_location", "guard_enabled", "service_running")
+                require(all(type(data.get(key)) is bool for key in fields), "手机权限状态格式错误")
+                require(type(data.get("settings_version")) is int and 0 <= data["settings_version"] <= elder["version"], "设置版本无效")
+                require(type(data.get("automatic_interval")) is int and 30 <= data["automatic_interval"] <= 120, "采集间隔无效")
+                state = {key: data[key] for key in fields + ("settings_version", "automatic_interval")}
+                self.db.execute("INSERT OR REPLACE INTO elder_device_state VALUES(?,?,?)", (elder["id"], json.dumps(state), now))
+                self.db.execute("UPDATE elders SET applied_version=MAX(applied_version,?) WHERE id=?", (data["settings_version"], elder["id"]))
+                if data.get("setup_request_id"):
+                    request = self.setup_request(elder["id"])
+                    require(request and request["id"] == data["setup_request_id"], "设置提醒已失效", 409)
+                    ack = data.get("setup_state")
+                    require(ack in ("received", "notified", "opened"), "提醒状态无效")
+                    order = {"pending": 0, "received": 1, "notified": 2, "opened": 3, "expired": 4}
+                    if order[ack] > order[request["state"]]:
+                        self.db.execute("UPDATE elder_setup_requests SET state=? WHERE elder_id=?", (ack, elder["id"]))
+                return {"ok": True}
             if method == "POST" and path == "/device/diagnostics":
                 version = data.get("app_version")
                 require(isinstance(version, str) and re.fullmatch(r"[A-Za-z0-9._-]{1,30}", version), "应用版本格式错误")
@@ -325,12 +354,16 @@ class Store:
                     request["state"] = "received"
                 else:
                     request = None
-                return {"location_request": request, "version": elder["version"], "settings": json.loads(elder["settings"])}
+                setup = self.setup_request(elder["id"])
+                return {"location_request": request, "setup_request": setup if setup and setup["state"] not in ("opened", "expired") else None,
+                        "version": elder["version"], "settings": json.loads(elder["settings"])}
             if method == "GET" and path == "/device/settings":
                 last = json.loads(elder["last_location"])["recorded_at"] if elder["last_location"] else None
                 return {"version": elder["version"], "settings": json.loads(elder["settings"]), "last_recorded_at": last}
             if method == "POST" and path == "/device/unpair":
                 self.db.execute("DELETE FROM elder_diagnostics WHERE elder_id=?", (elder["id"],))
+                self.db.execute("DELETE FROM elder_device_state WHERE elder_id=?", (elder["id"],))
+                self.db.execute("DELETE FROM elder_setup_requests WHERE elder_id=?", (elder["id"],))
                 self.db.execute("DELETE FROM elder_push_devices WHERE elder_id=?", (elder["id"],))
                 self.db.execute("DELETE FROM elder_outbox WHERE elder_id=?", (elder["id"],))
                 self.db.execute("DELETE FROM location_requests WHERE elder_id=?", (elder["id"],))
@@ -419,6 +452,19 @@ class Store:
         if len(parts) == 2 and method == "GET":
             return self.snapshot(self.access(eid, uid), uid)
         action = parts[2] if len(parts) > 2 else ""
+        if action == "setup-request" and method == "POST":
+            elder = self.access(eid, uid, edit=True)
+            require(elder["consent"], "请先绑定老人手机", 409)
+            action_name = data.get("action")
+            require(action_name in ("location", "background", "battery", "notifications", "startup"), "不支持此设置提醒")
+            previous = self.setup_request(eid)
+            if previous and previous["action"] == action_name and previous["state"] in ("pending", "received", "notified"):
+                return previous
+            require(not previous or now - previous["requested_at"] >= 30, "请间隔30秒再发送设置提醒", 429)
+            request_id = secrets.token_hex(12)
+            self.db.execute("INSERT OR REPLACE INTO elder_setup_requests VALUES(?,?,?,?,?,?)", (eid, request_id, action_name, now, now + 3600, "pending"))
+            self.enqueue_elder(eid, "setup", 3600, request_id)
+            return self.setup_request(eid)
         if action == "location-request" and method == "POST":
             elder = self.access(eid, uid)
             require(elder["consent"], "请先绑定老人手机", 409)
@@ -444,6 +490,8 @@ class Store:
             require(data.get("version") == elder["version"], "设置已被其他家属修改，请刷新后重试", 409)
             settings = data.get("settings")
             require(isinstance(settings, dict), "设置格式错误")
+            interval = settings.get("automatic_interval", json.loads(elder["settings"]).get("automatic_interval", 60))
+            require(type(interval) is int and 30 <= interval <= 120, "自动采集间隔需30–120秒整数")
             number(settings, "outside_delay", 30, 1800)
             number(settings, "offline_after", 180, 3600)
             fence, trip = settings.get("fence"), settings.get("trip")
@@ -462,7 +510,7 @@ class Store:
                     number(trip, "deadline", now + 60, now + 7 * 86400)
             settings = {"fence": ({k: fence[k] for k in ("lat", "lon", "radius")} if fence else None),
                         "trip": ({k: trip[k] for k in ("name", "lat", "lon", "radius", "deadline", "status")} if trip else None),
-                        "outside_delay": settings["outside_delay"], "offline_after": settings["offline_after"]}
+                        "outside_delay": settings["outside_delay"], "offline_after": settings["offline_after"], "automatic_interval": interval}
             self.db.execute("UPDATE elders SET settings=?,version=version+1,outside_since=NULL,outside_count=0 WHERE id=?", (json.dumps(settings), eid))
             self.enqueue_elder(eid, "settings", 3600)
             self.resolve(eid, "outside")

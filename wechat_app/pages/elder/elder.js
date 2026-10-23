@@ -1,6 +1,6 @@
 const api=require('../../utils/api'),ui=require('../../utils/ui'),model=require('../../utils/model');
 Page({
- data:{ elder:null,busy:false,error:'',code:'',expires:'',markers:[],circles:[],hasMap:false,mapCenter:null,lastRefresh:'',alertError:'',showDetails:false,queryWaiting:false,queryError:'' },
+ data:{ elder:null,busy:false,error:'',code:'',expires:'',markers:[],circles:[],hasMap:false,mapCenter:null,lastRefresh:'',alertError:'',showDetails:false,queryWaiting:false,queryTracking:false,queryError:'' },
  onLoad(query){this.id=query.id;this.visible=false;this.sequence=0;this.queryEpoch=0;this.query=null;},
  onShow(){if(!ui.requireLogin())return;this.visible=true;
    Promise.resolve(this.refresh()).then(()=>{if(this.visible)this.resumeQuery();});
@@ -9,12 +9,13 @@ Page({
  },15000);},
  onHide(){this.stop();},onUnload(){this.stop();},
  stop(){this.visible=false;this.sequence++;this.pauseQuery();clearInterval(this.alertTimer);},
- pauseQuery(){this.queryEpoch++;clearTimeout(this.queryTimer);clearTimeout(this.budgetTimer);this.queryTimer=null;this.budgetTimer=null;this.setData({queryWaiting:false});},
+ pauseQuery(){this.queryEpoch++;clearTimeout(this.queryTimer);clearTimeout(this.budgetTimer);this.queryTimer=null;this.budgetTimer=null;this.setData({queryWaiting:false,queryTracking:false});},
  finishQuery(message=''){this.pauseQuery();this.sequence++;this.query=null;this.setData({queryError:message});},
  onPullDownRefresh(){Promise.resolve(this.refresh()).finally(()=>wx.stopPullDownRefresh());},
  async load(){const sequence=++this.sequence;const elder=await api.request(api.elderPath(this.id),'GET',undefined,true,this.query?Math.max(1,this.query.deadline-Date.now()):20000);
    if(!this.visible||sequence!==this.sequence)return;
    this.setData(Object.assign({elder:model.decorate(elder),lastRefresh:new Date().toLocaleTimeString()},model.mapData(elder)));
+   if(this.query && this.query.id===null && this.pendingRequest(elder.location_request))this.rememberQuery(elder.location_request);
    if(elder.location_request && !this.pendingRequest(elder.location_request)){
      if(this.query && elder.location_request.id===this.query.id)this.finishQuery();
      else if(!this.query)this.setData({queryError:''});
@@ -36,21 +37,21 @@ Page({
  });},
  pendingRequest(request){return !!request && ['pending','received'].includes(request.state);},
  rememberQuery(request){
-   // The local five-second budget is independent of server TTL and phone clock skew.
+   // Five seconds changes progress presentation; it must not discard the real query.
    if(this.query && (this.query.id===null || this.query.id===request.id))this.query.id=request.id;
-   else this.query={id:request.id,deadline:Date.now()+5000};
+   else this.query={id:request.id,fastDeadline:Date.now()+5000,deadline:Date.now()+Math.min(180000,(request.expires-request.requested_at)*1000||180000)};
  },
  deadlineMessage(){
    const request=this.data.elder&&this.data.elder.location_request;
-   if(request&&request.state==='received')return '5秒内未取得新位置：手机已收到请求，定位仍在进行。可稍后查询结果';
-   if(request&&request.state==='pending')return '5秒内未收到手机响应。可稍后查询结果，地图仍为上次采集位置';
-   return '5秒内未确认定位结果，请检查后台连接或稍后查询';
+   if(request&&request.state==='received')return '手机已收到请求，定位仍在进行；新位置到达后会自动显示';
+   if(request&&request.state==='pending')return '尚未收到手机响应，正在继续跟进；地图仍为上次采集位置';
+   return '正在确认后台请求状态，取得新位置后自动显示';
  },
  async locate(){
-   if(this.data.busy||this.data.queryWaiting)return;
-   this.query={id:null,deadline:Date.now()+5000};
+   if(this.data.busy||this.data.queryTracking)return;
+   this.query={id:null,fastDeadline:Date.now()+5000,deadline:Date.now()+180000};
    this.setData({error:'',queryError:''});
-   this.resumeQuery(); // Arm the deadline BEFORE POST, even if its response never returns.
+   this.resumeQuery(); // Fast progress first; keep following this same request afterward.
    const epoch=this.queryEpoch;
    try{
      const current=this.data.elder&&this.data.elder.location_request;
@@ -80,31 +81,39 @@ Page({
    if(!this.query && this.pendingRequest(request))this.rememberQuery(request);
    if(!this.query)return;
    clearTimeout(this.queryTimer);clearTimeout(this.budgetTimer);
-   const epoch=++this.queryEpoch,remaining=this.query.deadline-Date.now();
-   if(remaining<=0){this.finishQuery(this.deadlineMessage());return;}
-   this.setData({queryWaiting:true});
-   this.budgetTimer=setTimeout(()=>{
-     if(this.visible&&epoch===this.queryEpoch)this.finishQuery(this.deadlineMessage());
-   },remaining);
-   if(this.query.id)this.queryTimer=setTimeout(()=>this.pollQuery(epoch),Math.min(400,remaining));
+   const epoch=++this.queryEpoch,remaining=this.query.deadline-Date.now(),fastRemaining=this.query.fastDeadline-Date.now();
+   if(remaining<=0){this.finishQuery('本次请求未取得新位置，请检查老人手机联网、推送和后台权限后重试');return;}
+   this.setData({queryWaiting:fastRemaining>0,queryTracking:true});
+   if(fastRemaining>0)this.budgetTimer=setTimeout(()=>{
+     if(this.visible&&epoch===this.queryEpoch)this.setData({queryWaiting:false,queryError:this.deadlineMessage()});
+   },fastRemaining);
+   else this.setData({queryError:this.deadlineMessage()});
+   this.queryTimer=setTimeout(()=>this.pollQuery(epoch),Math.min(fastRemaining>0?400:2000,remaining));
  },
  queryFailure(error){
    if(!this.visible)return;
    if([401,403,404].includes(error.status)){
      this.finishQuery(error.message||'无法读取定位结果');
      if(error.status===401)ui.requireLogin();
-   }else this.setData({queryError:(error.message||'读取结果失败')+'；本次最多等待5秒'});
+   }else this.setData({queryError:(error.message||'读取结果失败')+'；正在继续读取同一次请求的结果'});
  },
  async pollQuery(epoch){
    if(!this.visible || epoch!==this.queryEpoch || !this.query)return;
    this.queryTimer=null;
-   try{await this.load();if(this.visible && epoch===this.queryEpoch)this.setData({queryError:''});}
+   try{await this.load();if(this.visible && epoch===this.queryEpoch)this.setData({queryError:this.data.queryWaiting?'':this.deadlineMessage()});}
    catch(error){if(epoch===this.queryEpoch)this.queryFailure(error);}
    if(!this.visible || epoch!==this.queryEpoch || !this.query)return;
    const remaining=this.query.deadline-Date.now();
-   if(remaining<=0){this.finishQuery(this.deadlineMessage());return;}
-   this.queryTimer=setTimeout(()=>this.pollQuery(epoch),Math.min(400,remaining));
+   if(remaining<=0){this.finishQuery('本次请求未取得新位置，请检查老人手机联网、推送和后台权限后重试');return;}
+   this.queryTimer=setTimeout(()=>this.pollQuery(epoch),Math.min(this.data.queryWaiting?400:2000,remaining));
  },
+ setupReminder(){return ui.run(this,async()=>{
+   const actions=['location','background','battery','notifications','startup'];
+   const choice=await new Promise(resolve=>wx.showActionSheet({itemList:['定位权限','后台定位','电池限制','通知权限','自启动和后台活动'],success:r=>resolve(r.tapIndex),fail:()=>resolve(-1)}));
+   if(choice<0)return;
+   if(!await ui.confirm('发送设置提醒到老人手机？仍需本人确认，手机离线时无法立即送达。'))return;
+   await api.request(api.elderPath(this.id,'/setup-request'),'POST',{action:actions[choice]});await this.load();
+ });},
  toggleDetails(){this.setData({showDetails:!this.data.showDetails});},
  openMap(){
    const location=this.data.elder&&this.data.elder.location;if(!location)return;

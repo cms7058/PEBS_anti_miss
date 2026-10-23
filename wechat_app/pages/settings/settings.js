@@ -1,13 +1,13 @@
 const api=require('../../utils/api'),ui=require('../../utils/ui'),model=require('../../utils/model'),coordinates=require('../../utils/coordinates');
 Page({
- data:{mode:'fence',form:{lat:'',lon:'',radius:'500',name:'',minutes:'60',outside:'120',offline:'600'},busy:false,error:'',loaded:false,conflict:false,mapLat:31.2304,mapLon:121.4737,markers:[],circles:[]},
- onLoad(query){this.id=query.id;const mode=['fence','trip','threshold'].includes(query.mode)?query.mode:'fence';this.setData({mode});if(ui.requireLogin())this.load();},
+ data:{mode:'fence',form:{lat:'',lon:'',radius:'500',name:'',minutes:'60',outside:'120',offline:'600',interval:'60'},busy:false,error:'',loaded:false,conflict:false,mapLat:31.2304,mapLon:121.4737,markers:[],circles:[]},
+ onLoad(query){this.id=query.id;const mode=['fence','trip','threshold','device'].includes(query.mode)?query.mode:'fence';this.setData({mode});if(ui.requireLogin())this.load();},
  load(){return ui.run(this,async()=>{
    const elder=await api.request(api.elderPath(this.id));if(!elder.can_edit)throw new Error('当前账号没有修改设置的权限');
    this.snapshot=elder;
    const settings=elder.settings,target=this.data.mode==='trip'?settings.trip:settings.fence;
    const source=target||elder.location;
-   const form={lat:source?String(source.lat):'',lon:source?String(source.lon):'',radius:String(target?target.radius:this.data.mode==='trip'?200:500),name:target&&target.name||'',minutes:'60',outside:String(settings.outside_delay),offline:String(settings.offline_after)};
+   const form={lat:source?String(source.lat):'',lon:source?String(source.lon):'',radius:String(target?target.radius:this.data.mode==='trip'?200:500),name:target&&target.name||'',minutes:'60',outside:String(settings.outside_delay),offline:String(settings.offline_after),interval:String(settings.automatic_interval||60)};
    this.setData({form,loaded:true,conflict:false});this.updateMap();
  });},
  input(e){this.setData({[`form.${e.currentTarget.dataset.field}`]:e.detail.value});this.updateMap();},

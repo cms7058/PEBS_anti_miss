@@ -21,6 +21,9 @@ function decorate(elder) {
     pushLabel=!diag.push_consent?'老人端尚未同意启用推送，请在老人手机上开启守护':!diag.cid_available?`老人端 ${diag.app_version}：SDK尚未取得标识，请检查手机网络或重试推送登记`:`老人端 ${diag.app_version}：已取得标识，但服务器登记未完成，请查看老人端失败原因`;
   }
   return Object.assign({}, elder, {
+    permissionRows: elder.device_state ? [['precise_location','精确定位'],['location_enabled','系统定位'],['background_location','后台定位'],['battery_unrestricted','电池限制已解除'],['notifications','通知权限'],['network_location','网络辅助'],['guard_enabled','守护开关'],['service_running','守护服务']].map(([key,label])=>({key,label,enabled:elder.device_state[key]})) : [],
+    deviceStateTime: elder.device_state ? time(elder.device_state.updated_at) : '尚未上报，需老人端0.1.11及以上',
+    setupLabel: elder.setup_request ? ({pending:'提醒待手机接收；离线时无法送达',received:'手机已读取，尚未确认提醒显示',notified:'手机已提交系统通知，等待本人确认',opened:'本人已打开设置，请刷新权限状态核实',expired:'设置提醒已过期'}[elder.setup_request.state]||'状态未知') : '',
     requestWaiting: waiting, requestLabel, canRequestPosition, requestTitle: automatic && !pushReady ? '等待下一次自动位置' : '获取最新位置',
     modeLabel: elder.settings.fence || (elder.settings.trip && elder.settings.trip.status==='active') ? '自动守护：围栏或行程期间定时定位' : '按需查询：不自动定位，点击获取最新位置时请求采集',
     pushLabel,
@@ -74,6 +77,10 @@ function buildSettings(snapshot, form, mode, now = Date.now()/1000) {
     if (!form.name.trim() || form.name.trim().length > 100) throw new Error('目的地名称需 1–100 字');
     if (!Number.isFinite(minutes)||minutes < 2||minutes > 10080) throw new Error('预计到达需在 2–10080 分钟后');
     settings.trip=Object.assign(target,{ name:form.name.trim(),deadline:now+minutes*60,status:'active' });
+  } else if(mode==='device'){
+    const interval=Number(form.interval);
+    if(!Number.isInteger(interval)||interval<30||interval>120)throw new Error('采集间隔需30–120秒整数');
+    settings.automatic_interval=interval;
   } else {
     const outside=Number(form.outside),offline=Number(form.offline);
     if (!Number.isFinite(outside)||outside<30||outside>1800||!Number.isFinite(offline)||offline<180||offline>3600) {

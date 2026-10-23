@@ -50,6 +50,7 @@ class MainActivity : Activity() {
     private val permissionTiles = mutableListOf<PermissionTile>()
     private var updatingSwitch = false
     private var boundScreen = false
+    private var displayedSetup = ""
     private data class PermissionTile(val badge: TextView, val detail: TextView, val test: () -> Boolean, val good: String, val missing: String)
     private val update = object : Runnable {
         override fun run() { refreshState(); handler.postDelayed(this, 2000) }
@@ -59,6 +60,7 @@ class MainActivity : Activity() {
         super.onResume()
         handler.removeCallbacks(update)
         handler.post(update)
+        worker.execute { DeviceSettings.report(this) }
         if (prefs.getBoolean("tracking_enabled", false) && !prefs.getString("token", "").isNullOrEmpty() &&
             checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED) launchTracking()
     }
@@ -167,6 +169,18 @@ class MainActivity : Activity() {
         }
     }
     private fun renderDashboard() {
+        displayedSetup = prefs.getString("setup_id", "") + ":" + prefs.getString("setup_state", "")
+        if (!prefs.getString("setup_id", "").isNullOrEmpty() && prefs.getString("setup_state", "") != "opened" && prefs.getLong("setup_expires", 0) > System.currentTimeMillis()) {
+            val action = prefs.getString("setup_action", "") ?: ""
+            val setup = card(content, Color.rgb(255, 240, 217))
+            setup.addView(text("家属请你检查${DeviceSettings.titles[action] ?: "手机设置"}", 23f, ink, true))
+            setup.addView(text("需要你亲自确认。自启动和后台活动需在手机启动管理中设置。", 17f, muted))
+            button(setup, "查看系统设置", true) {
+                prefs.edit().putString("setup_state", "opened").apply()
+                worker.execute { DeviceSettings.report(this) }
+                DeviceSettings.open(this, action)
+            }
+        }
         val hero = card(content, pale)
         val heroTop = row()
         heroTop.addView(icon(android.R.drawable.ic_lock_idle_lock), LinearLayout.LayoutParams(dp(56), dp(56)))
@@ -277,6 +291,7 @@ class MainActivity : Activity() {
     }
     private fun refreshState() {
         if (!boundScreen || !::guardSwitch.isInitialized) return
+        if (displayedSetup != prefs.getString("setup_id", "") + ":" + prefs.getString("setup_state", "")) { render(); return }
         val enabled = prefs.getBoolean("tracking_enabled", false)
         val running = enabled && TrackingService.isRunning()
         updatingSwitch = true; guardSwitch.isChecked = enabled; updatingSwitch = false
@@ -306,6 +321,7 @@ class MainActivity : Activity() {
         PushManager.getInstance().turnOffPush(this)
         stopService(Intent(this, TrackingService::class.java))
         showNotice("位置共享已停止")
+        worker.execute { DeviceSettings.report(this) }
         refreshState()
     }
     private fun confirmStop() {
