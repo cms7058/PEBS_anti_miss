@@ -14,6 +14,7 @@ import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlsplit
 from backend.elder_push import ElderPushWorker, run_command_push, configured as elder_push_configured
+from backend.command_stream import CommandStream
 
 
 MAX_FENCE_SAMPLE_GAP = 180
@@ -60,6 +61,9 @@ class Store:
         self.clock = clock
         self.lock = threading.RLock()
         self.command_ready = threading.Event()
+        self.command_condition = threading.Condition(self.lock)
+        self.command_versions = {}
+        self.command_streams = {}
         self.db = sqlite3.connect(path, check_same_thread=False)
         self.db.row_factory = sqlite3.Row
         self.db.executescript("""
@@ -140,11 +144,34 @@ class Store:
         self.db.execute("INSERT OR REPLACE INTO elder_outbox(elder_id,kind,generation,expires,state) VALUES(?,?,?,?, 'pending')",
                         (elder_id, kind, generation or secrets.token_hex(12), self.clock() + ttl))
         self.command_ready.set()
+        with self.command_condition:
+            self.command_versions[elder_id] = self.command_versions.get(elder_id, 0) + 1
+            self.command_condition.notify_all()
+
+    def open_command_stream(self, token):
+        with self.command_condition:
+            device = self.one("SELECT id FROM elders WHERE device_token=? AND consent=1", (digest(token),))
+            require(device, "设备尚未绑定", 401)
+            eid = device["id"]
+            require(eid in self.command_streams or len(self.command_streams) < 4, "备用通道繁忙，请稍后重连", 503)
+            previous = self.command_streams.get(eid)
+            if previous:
+                previous.close()
+            stream = CommandStream(self, eid, digest(token))
+            self.command_streams[eid] = stream
+            self.command_condition.notify_all()
+            return stream
+
+    def close_command_streams(self):
+        with self.command_condition:
+            for stream in list(self.command_streams.values()):
+                stream.close()
 
     def elder_push_status(self, elder_id):
         device = self.one("SELECT app_id FROM elder_push_devices WHERE elder_id=?", (elder_id,))
         ready = bool(device and device["app_id"] == os.getenv("GETUI_APP_ID", "").strip())
         return {"configured": elder_push_configured(), "registered": ready,
+                "command_stream_registered": elder_id in self.command_streams,
                 "location_delivery": self.one("SELECT state,last_error FROM elder_outbox WHERE elder_id=? AND kind='location'", (elder_id,)),
                 "settings_delivery": self.one("SELECT state,last_error FROM elder_outbox WHERE elder_id=? AND kind='settings'", (elder_id,))}
 
@@ -255,7 +282,11 @@ class Store:
 
     def dispatch(self, method, path, data, token=""):
         with self.lock, self.db:
-            return self._dispatch(method, path, data, token)
+            try:
+                return self._dispatch(method, path, data, token)
+            finally:
+                if method != "GET":
+                    self.command_condition.notify_all()
 
     def _dispatch(self, method, path, data, token):
         now = self.clock()
@@ -305,6 +336,9 @@ class Store:
                 require(type(data.get("settings_version")) is int and 0 <= data["settings_version"] <= elder["version"], "设置版本无效")
                 require(type(data.get("automatic_interval")) is int and 30 <= data["automatic_interval"] <= 120, "采集间隔无效")
                 state = {key: data[key] for key in fields + ("settings_version", "automatic_interval")}
+                if "command_stream_connected" in data:
+                    require(type(data["command_stream_connected"]) is bool, "备用通道状态格式错误")
+                    state["command_stream_connected"] = data["command_stream_connected"]
                 self.db.execute("INSERT OR REPLACE INTO elder_device_state VALUES(?,?,?)", (elder["id"], json.dumps(state), now))
                 self.db.execute("UPDATE elders SET applied_version=MAX(applied_version,?) WHERE id=?", (data["settings_version"], elder["id"]))
                 if data.get("setup_request_id"):
@@ -625,6 +659,22 @@ class Handler(BaseHTTPRequestHandler):
             data = json.loads(self.rfile.read(length)) if length else {}
             require(isinstance(data, dict), "请求必须是 JSON 对象")
             token = self.headers.get("Authorization", "").removeprefix("Bearer ")
+            if self.command == "GET" and path == "/device/events":
+                stream = self.store.open_command_stream(token)
+                try:
+                    self.send_response(200)
+                    self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+                    self.send_header("Cache-Control", "no-store")
+                    self.end_headers()
+                    for chunk in stream:
+                        self.wfile.write(chunk)
+                        self.wfile.flush()
+                except OSError:
+                    pass
+                finally:
+                    stream.close()
+                    self.close_connection = True
+                return
             result = self.store.dispatch(self.command, path, data, token)
             self.respond(200, result)
         except APIError as exc:
@@ -684,6 +734,7 @@ def main():
         print("\n后台已停止。", flush=True)
     finally:
         stopped.set()
+        Handler.store.close_command_streams()
         Handler.store.command_ready.set()
         server.server_close()
         worker.join(timeout=1)

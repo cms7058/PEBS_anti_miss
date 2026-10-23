@@ -11,10 +11,10 @@ import android.os.Build
 import android.os.PowerManager
 import android.os.SystemClock
 
-/** Wake only for enabled automatic guarding. Idle on-demand mode has no alarm. */
+/** Periodic wake only for automatic guard; bounded recovery reacts to task/service loss. */
 class GuardWakeReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
-        if (intent.action == "cn.familyguard.elder.GUARD_WAKE" || intent.action == Intent.ACTION_BOOT_COMPLETED) {
+        if (intent.action in listOf("cn.familyguard.elder.GUARD_WAKE", "cn.familyguard.elder.GUARD_RECOVER", Intent.ACTION_BOOT_COMPLETED, Intent.ACTION_MY_PACKAGE_REPLACED)) {
             android.util.Log.i("FamilyGuard", "system guard wake: ${intent.action}")
             resume(context)
         }
@@ -26,11 +26,31 @@ class GuardWakeReceiver : BroadcastReceiver() {
         private fun pending(context: Context) = PendingIntent.getBroadcast(context, 40,
             Intent(context, GuardWakeReceiver::class.java).setAction("cn.familyguard.elder.GUARD_WAKE"),
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
+        private fun recovery(context: Context) = PendingIntent.getBroadcast(context, 41,
+            Intent(context, GuardWakeReceiver::class.java).setAction("cn.familyguard.elder.GUARD_RECOVER"),
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
+        fun cancelRecovery(context: Context) { context.getSystemService(AlarmManager::class.java).cancel(recovery(context)) }
+        fun recoverAfterLoss(context: Context) {
+            val prefs = context.getSharedPreferences("guard", Context.MODE_PRIVATE)
+            if (!GuardRecoveryPolicy.eligible(prefs.getBoolean("tracking_enabled", false), prefs.getBoolean("push_consent", false),
+                    !prefs.getString("token", "").isNullOrEmpty(), context.checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED,
+                    backgroundGranted(context), unrestricted(context))) return
+            val now = SystemClock.elapsedRealtime()
+            if (GuardRecoveryPolicy.newWindow(now, prefs.getLong("recovery_window", 0)))
+                prefs.edit().putLong("recovery_window", now).putInt("recovery_attempts", 0).remove("last_recovery").apply()
+            val attempts = prefs.getInt("recovery_attempts", 0)
+            if (!GuardRecoveryPolicy.allowed(attempts, now, prefs.getLong("last_recovery", 0))) return
+            try {
+                context.getSystemService(AlarmManager::class.java).setAndAllowWhileIdle(AlarmManager.ELAPSED_REALTIME_WAKEUP, now + 5000, recovery(context))
+                prefs.edit().putInt("recovery_attempts", attempts + 1).putLong("last_recovery", now).apply()
+            } catch (_: Exception) { /* OS may deny recovery; never create an unlimited retry loop. */ }
+        }
         fun schedule(context: Context, automatic: Boolean) {
             val manager = context.getSystemService(AlarmManager::class.java)
             if (automatic) manager.setAndAllowWhileIdle(AlarmManager.ELAPSED_REALTIME_WAKEUP,
                 SystemClock.elapsedRealtime() + 60000, pending(context))
             else manager.cancel(pending(context))
+            if (!context.getSharedPreferences("guard", Context.MODE_PRIVATE).getBoolean("tracking_enabled", false)) cancelRecovery(context)
         }
         fun resume(context: Context): Boolean {
             val prefs = context.getSharedPreferences("guard", Context.MODE_PRIVATE)

@@ -20,6 +20,7 @@ class HTTPTests(unittest.TestCase):
 
     @classmethod
     def tearDownClass(cls):
+        cls.store.close_command_streams()
         cls.server.shutdown(); cls.server.server_close(); cls.thread.join(); cls.store.db.close()
 
     def request(self, path, body=None, token="", method=None):
@@ -48,6 +49,26 @@ class HTTPTests(unittest.TestCase):
     def test_invalid_json_shape(self):
         status, body = self.request("/auth/register", ["bad"])
         self.assertEqual(status, 400); self.assertIn("error", body)
+
+    def test_streaming_http_delivers_commands_without_getui_and_revokes_on_unpair(self):
+        _, account = self.request('/auth/register', {'name': 'stream-http', 'password': 'long password 1234'})
+        _, elder = self.request('/elders', {'name': 'stream test'}, account['token'])
+        _, paired = self.request('/device/pair', {'code': elder['code'], 'consent': True})
+        token = paired['token']
+        req = Request(self.base + '/device/events', headers={'Authorization': 'Bearer ' + token, 'Accept': 'text/event-stream'})
+        with urlopen(req, timeout=3) as response:
+            self.assertIn('text/event-stream', response.headers['Content-Type'])
+            self.assertEqual(response.readline(), b'event: command\n')
+            self.assertEqual(response.readline(), b'data: sync_commands\n')
+            self.assertEqual(response.readline(), b'\n')
+            self.request('/elders/' + elder['id'] + '/location-request', {}, account['token'])
+            self.assertEqual(response.readline(), b'event: command\n')
+            self.assertEqual(response.readline(), b'data: sync_commands\n')
+            self.assertEqual(response.readline(), b'\n')
+            _, commands = self.request('/device/commands', token=token)
+            self.assertEqual(commands['location_request']['state'], 'received')
+            self.request('/device/unpair', {}, token)
+            self.assertEqual(response.read(), b'')
 
     def test_http_rate_limit(self):
         for _ in range(21):

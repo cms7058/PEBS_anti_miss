@@ -8,7 +8,7 @@ import tarfile
 root = Path(__file__).resolve().parents[1]
 paths = [
     ".dockerignore", "deploy/Dockerfile", "deploy/compose.yaml", "deploy/compose.http.yaml", "deploy/cloud.env.example",
-    "backend/__init__.py", "backend/server.py", "backend/wsgi.py", "backend/requirements.txt",
+    "backend/__init__.py", "backend/server.py", "backend/wsgi.py", "backend/elder_push.py", "backend/command_stream.py", "backend/requirements.txt",
     "deploy/requirements.txt", "deploy/gunicorn.conf.py", "deploy/Caddyfile",
     "deploy/backend.env.example", "deploy/familyguard.service", "deploy/backup.py",
     "deploy/familyguard-backup.service", "deploy/familyguard-backup.timer", "deploy/README.md",

@@ -27,13 +27,18 @@ class LocationDiagnosticsTests(unittest.TestCase):
             self.assertEqual(store.one("SELECT state FROM location_requests")["state"], "pending")
             store.dispatch("GET", "/device/commands", {}, device)
             store.dispatch("POST", "/device/location", {"lat":31.1234567,"lon":121.9876543,"accuracy":20,"battery":87,"recorded_at":now,"applied_version":0}, device)
+            with store.db:
+                store.db.execute("INSERT INTO elder_device_state VALUES(?,?,?)", (eid, json.dumps({"battery_unrestricted": False, "service_running": True,
+                    "command_stream_connected": False, "extra": "DEVICE_STATE_PRIVATE", "lat": 31.1234567}), now))
             before = store.db.total_changes
             result = diagnose(database, Path(__file__).resolve().parents[2], now + 200)
             self.assertEqual(store.db.total_changes, before)
             self.assertEqual(result["devices"][0]["request"]["state"], "completed")
             self.assertTrue(result["devices"][0]["request"]["post_request_capture_present"])
+            self.assertEqual(result["devices"][0]["phone_state_at_last_report"], {"battery_unrestricted": False, "service_running": True, "command_stream_connected": False})
+            self.assertEqual(result["devices"][0]["phone_state_age_seconds"], 200)
             raw = json.dumps(result)
-            for secret in ("PRIVATE_NAME", "PRIVATE_PASSWORD_123", "PRIVATE_ELDER", owner, device, eid, elder["code"], "31.1234567", "121.9876543", '"battery"'):
+            for secret in ("PRIVATE_NAME", "PRIVATE_PASSWORD_123", "PRIVATE_ELDER", "DEVICE_STATE_PRIVATE", owner, device, eid, elder["code"], "31.1234567", "121.9876543", '"battery"'):
                 self.assertNotIn(secret, raw)
             cid = "CID_PRIVATE_1234567890"
             app_id = "APP_ID_1234567890"

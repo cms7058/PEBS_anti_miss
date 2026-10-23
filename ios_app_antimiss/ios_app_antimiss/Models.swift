@@ -52,9 +52,11 @@ struct ElderPushDelivery: Codable {
 struct ElderPushStatus: Codable {
     let configured: Bool
     let registered: Bool
+    let command_stream_registered: Bool?
     let location_delivery: ElderPushDelivery?
     let settings_delivery: ElderPushDelivery?
     var label: String {
+        if command_stream_registered == true { return "备用指令连接已登记；实际响应以手机读取命令为准" }
         if !configured { return "老人端推送尚未配置，远程请求暂不能主动送达" }
         if !registered { return "尚未收到这台手机的推送登记，请检查老人端的版本及推送状态" }
         switch location_delivery?.state {
@@ -100,6 +102,7 @@ struct RemoteDeviceState: Codable {
     let network_location: Bool
     let guard_enabled: Bool
     let service_running: Bool
+    let command_stream_connected: Bool?
     let settings_version: Int
     let automatic_interval: Int
     let updated_at: Double
@@ -144,6 +147,7 @@ struct Elder: Codable, Identifiable {
 extension Elder {
     var pushDescription: String? {
         guard let transport = elder_push else { return nil }
+        if transport.command_stream_registered == true { return transport.label }
         if !transport.configured { return transport.label }
         if let diag = device_diagnostics, !transport.registered {
             if !diag.push_consent { return "老人端尚未同意启用推送，请在老人手机上开启守护" }
@@ -153,9 +157,9 @@ extension Elder {
         if transport.registered && device_diagnostics?.sdk_online == false { return "推送已登记，但最近一次SDK连接状态为离线（请刷新查看最新状态）" }
         return transport.label
     }
-    var canRequestPosition: Bool { paired && (settings.automatic || elder_push == nil || (elder_push!.configured && elder_push!.registered)) }
+    var canRequestPosition: Bool { paired && (settings.automatic || elder_push == nil || elder_push?.command_stream_registered == true || (elder_push!.configured && elder_push!.registered)) }
     var positionRequestTitle: String {
-        if settings.automatic && !(elder_push?.configured == true && elder_push?.registered == true) { return "等待下一次自动位置" }
+        if settings.automatic && elder_push?.command_stream_registered != true && !(elder_push?.configured == true && elder_push?.registered == true) { return "等待下一次自动位置" }
         return "获取最新位置"
     }
     var positionRequestLabel: String? {

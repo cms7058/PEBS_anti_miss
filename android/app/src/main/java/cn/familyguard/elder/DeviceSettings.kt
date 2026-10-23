@@ -26,6 +26,7 @@ object DeviceSettings {
             .put("location_enabled", if (Build.VERSION.SDK_INT >= 28) locations.isLocationEnabled else locations.isProviderEnabled(LocationManager.GPS_PROVIDER) || locations.isProviderEnabled(LocationManager.NETWORK_PROVIDER))
             .put("network_location", locations.allProviders.contains(LocationManager.NETWORK_PROVIDER) && locations.isProviderEnabled(LocationManager.NETWORK_PROVIDER))
             .put("guard_enabled", prefs.getBoolean("tracking_enabled", false)).put("service_running", TrackingService.isRunning())
+            .put("command_stream_connected", prefs.getBoolean("command_stream_connected", false))
             .put("settings_version", prefs.getInt("settings_version", 0)).put("automatic_interval", settings.optInt("automatic_interval", 60).coerceIn(30, 120))
     }
     fun report(context: Context) {

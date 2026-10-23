@@ -25,8 +25,8 @@
         <service android:name=".ElderPushService" android:exported="false" android:process=":pushservice" />
         <service android:name=".ElderPushReceiver" android:exported="false" />
         <receiver android:name=".GuardWakeReceiver" android:exported="false">
-            <intent-filter><action android:name="android.intent.action.BOOT_COMPLETED" /></intent-filter>
+            <intent-filter><action android:name="android.intent.action.BOOT_COMPLETED" /><action android:name="android.intent.action.MY_PACKAGE_REPLACED" /></intent-filter>
         </receiver>
-        <service android:name=".TrackingService" android:exported="false" android:foregroundServiceType="location" />
+        <service android:name=".TrackingService" android:exported="false" android:stopWithTask="false" android:foregroundServiceType="location" />
     </application>
 </manifest>

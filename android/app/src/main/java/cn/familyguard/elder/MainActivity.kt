@@ -300,9 +300,9 @@ class MainActivity : Activity() {
         guardTitle.text = if (running) "守护已开启" else if (enabled) "守护需要恢复" else "守护已暂停"
         guardSubtitle.text = if (running) "可返回桌面或锁屏，保留守护通知" else if (enabled) "请检查下方权限，或重新连接守护" else "开启后，家属才可请求新位置"
         recoverGuard.visibility = if (enabled && !running) View.VISIBLE else View.GONE
-        val online = running && prefs.getBoolean("push_online", false)
+        val online = running && (prefs.getBoolean("push_online", false) || prefs.getBoolean("command_stream_connected", false))
         paintBadge(pushBadge, if (!enabled) "已关闭" else if (online) "最近在线" else "待连接", online)
-        pushDetail.text = if (online) "最近回报已连接；以实际请求结果为准" else if (enabled) "暂不能确认请求可送达，请检查网络" else "开启守护后连接"
+        pushDetail.text = if (running && prefs.getBoolean("command_stream_connected", false)) "备用连接已建立；以实际请求结果为准" else if (online) "最近回报已连接；以实际请求结果为准" else if (enabled) "暂不能确认请求可送达，请检查网络" else "开启守护后连接"
         val settings = try { JSONObject(prefs.getString("settings", "{}") ?: "{}") } catch (_: Exception) { JSONObject() }
         val automatic = settings.optJSONObject("fence") != null || settings.optJSONObject("trip")?.optString("status") == "active"
         paintBadge(modeBadge, if (!enabled) "已暂停" else if (automatic) "自动守护" else "按需定位", enabled)
@@ -378,7 +378,7 @@ class MainActivity : Activity() {
                 .setNegativeButton("暂不开启") { _, _ -> showNotice("尚未启用推送，请阅读说明后开启守护") }.show()
             return
         }
-        prefs.edit().putBoolean("tracking_enabled", true).commit()
+        prefs.edit().putBoolean("tracking_enabled", true).remove("recovery_window").remove("recovery_attempts").remove("last_recovery").commit()
         try {
             startForegroundService(Intent(this, TrackingService::class.java))
             ElderPushRuntime.start(this)

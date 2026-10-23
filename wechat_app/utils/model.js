@@ -8,7 +8,8 @@ function decorate(elder) {
   const p = elder.location, request = elder.location_request;
   const waiting = !!request && ['pending','received'].includes(request.state);
   const automatic=!!elder.settings.fence || !!(elder.settings.trip && elder.settings.trip.status==='active');
-  const pushReady=!!elder.elder_push && elder.elder_push.configured && elder.elder_push.registered;
+  const directReady=!!elder.elder_push && elder.elder_push.command_stream_registered===true;
+  const pushReady=directReady || !!elder.elder_push && elder.elder_push.configured && elder.elder_push.registered;
   const canRequestPosition=elder.paired && (automatic || !elder.elder_push || pushReady);
   let requestLabel = !request ? '' : waiting ? (request.state === 'pending' ? '等待老人手机接收请求…' : '老人手机已收到请求，等待新位置…') : request.state === 'completed' ? request.completion_source === 'automatic' ? '已收到请求后的自动上报位置' : `本次已取得新位置：${time(request.completed_at)}` : '定位请求已超时，请确认老人手机联网并开启守护';
   if(request && request.state!=='completed') {
@@ -17,12 +18,14 @@ function decorate(elder) {
   }
   let pushLabel=!elder.elder_push ? '' : !elder.elder_push.configured ? '老人端推送尚未配置，远程请求暂不能主动送达' : !elder.elder_push.registered ? '尚未收到这台手机的推送登记，请检查老人端的版本及推送状态' : elder.elder_push.location_delivery && elder.elder_push.location_delivery.state === 'failed' ? '推送发送失败，请检查服务器配置' : '老人端推送已配置，手机休眠或服务停止可能影响响应';
   const diag=elder.device_diagnostics;
-  if(diag && elder.elder_push && elder.elder_push.configured && !elder.elder_push.registered) {
+  if(directReady)pushLabel='备用指令连接已登记；实际响应以手机读取命令为准';
+  else if(diag && elder.elder_push && elder.elder_push.configured && !elder.elder_push.registered) {
     pushLabel=!diag.push_consent?'老人端尚未同意启用推送，请在老人手机上开启守护':!diag.cid_available?`老人端 ${diag.app_version}：SDK尚未取得标识，请检查手机网络或重试推送登记`:`老人端 ${diag.app_version}：已取得标识，但服务器登记未完成，请查看老人端失败原因`;
   }
   return Object.assign({}, elder, {
     permissionRows: elder.device_state ? [['precise_location','精确定位'],['location_enabled','系统定位'],['background_location','后台定位'],['battery_unrestricted','电池限制已解除'],['notifications','通知权限'],['network_location','网络辅助'],['guard_enabled','守护开关'],['service_running','守护服务']].map(([key,label])=>({key,label,enabled:elder.device_state[key]})) : [],
     deviceStateTime: elder.device_state ? time(elder.device_state.updated_at) : '尚未上报，需老人端0.1.11及以上',
+    commandStreamLabel: elder.device_state && typeof elder.device_state.command_stream_connected==='boolean' ? (elder.device_state.command_stream_connected?'备用指令通道：最近上报已连接':'备用指令通道：最近上报未连接') : '',
     setupLabel: elder.setup_request ? ({pending:'提醒待手机接收；离线时无法送达',received:'手机已读取，尚未确认提醒显示',notified:'手机已提交系统通知，等待本人确认',opened:'本人已打开设置，请刷新权限状态核实',expired:'设置提醒已过期'}[elder.setup_request.state]||'状态未知') : '',
     requestWaiting: waiting, requestLabel, canRequestPosition, requestTitle: automatic && !pushReady ? '等待下一次自动位置' : '获取最新位置',
     modeLabel: elder.settings.fence || (elder.settings.trip && elder.settings.trip.status==='active') ? '自动守护：围栏或行程期间定时定位' : '按需查询：不自动定位，点击获取最新位置时请求采集',

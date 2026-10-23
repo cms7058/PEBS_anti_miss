@@ -32,6 +32,7 @@ class Application:
     def stop(self):
         self.stopped.set()
         self.store.command_ready.set()
+        self.store.close_command_streams()
         if self.monitor:
             self.monitor.join(timeout=2)
 
@@ -104,6 +105,14 @@ class Application:
                 data = {}
             require(isinstance(data, dict), "请求必须是 JSON 对象")
             token = environ.get("HTTP_AUTHORIZATION", "").removeprefix("Bearer ")
+            if method == "GET" and path == "/device/events":
+                stream = self.store.open_command_stream(token)
+                try:
+                    start_response("200 OK", [("Content-Type", "text/event-stream; charset=utf-8"), ("Cache-Control", "no-store"), ("X-Accel-Buffering", "no")])
+                except BaseException:
+                    stream.close()
+                    raise
+                return stream
             result = self.store.dispatch(method, path, data, token)
             status = 200
         except APIError as exc:

@@ -8,6 +8,7 @@
    <view class="location-content">
     <view class="metrics"><view><view class="metric-caption">手机电量</view><view class="metric-value">{{elder.batteryValue}}</view></view><view><view class="metric-caption">定位误差</view><view class="metric-value">{{elder.accuracyValue}}</view></view><view><view class="metric-caption">位置状态</view><view class="metric-value {{elder.stale ? 'warning' : ''}}">{{elder.stale ? '历史位置' : '已上报'}}</view></view></view>
     <view class="muted">{{elder.lastLabel}}</view>
+    <view wx:if="{{elder.location}}" class="muted selectable">{{elder.coordinateLabel}}</view>
     <button class="primary locate-action" bindtap="locate" loading="{{queryWaiting}}" disabled="{{busy || (!elder.canRequestPosition && !elder.requestWaiting) || queryTracking}}">{{queryWaiting ? '正在请求新位置…' : queryTracking ? '正在跟进手机响应…' : elder.requestWaiting ? '继续查询结果' : elder.requestTitle}}</button>
     <view wx:if="{{elder.requestLabel && !queryError}}" class="muted">{{elder.requestLabel}}</view>
     <view wx:if="{{queryError}}" class="notice">{{queryError}}</view>
@@ -41,6 +42,7 @@
    <view class="muted">权限状态上报于 {{elder.deviceStateTime}}；历史上报不代表当前在线</view>
    <view wx:for="{{elder.permissionRows}}" wx:key="key" class="row"><text>{{item.label}}</text><text class="{{item.enabled ? 'tag' : 'warning'}}">{{item.enabled ? '✓ 已开启' : '! 未开启'}}</text></view>
    <view wx:if="{{elder.device_state}}" class="muted">手机已应用间隔 {{elder.device_state.automatic_interval}} 秒 · 设置版本 {{elder.device_state.settings_version}} / {{elder.version}}</view>
+   <view wx:if="{{elder.commandStreamLabel}}" class="muted">{{elder.commandStreamLabel}}</view>
    <view class="map-actions"><button wx:if="{{elder.can_edit}}" data-mode="device" bindtap="settings" disabled="{{busy}}">调整采集间隔</button><button wx:if="{{elder.can_edit}}" bindtap="setupReminder" disabled="{{busy || !elder.paired}}">发送设置提醒</button></view>
    <view wx:if="{{elder.setupLabel}}" class="notice">{{elder.setupLabel}}</view>
    <view class="muted">系统权限必须在老人手机确认；自启动状态无法统一读取。手机离线或停止共享时不能保证提醒送达。点击“刷新记录”读取新上报状态。</view>

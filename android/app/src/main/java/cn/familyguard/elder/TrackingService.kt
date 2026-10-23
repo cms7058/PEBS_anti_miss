@@ -24,6 +24,7 @@ class TrackingService : Service(), LocationListener {
     private val worker = Executors.newSingleThreadExecutor()
     private val metadata = Executors.newSingleThreadExecutor()
     private var reporting = false
+    private var commandStream: CommandStream? = null
     private var lastReport = 0L
     private var lastReportSignature = ""
     private val uploader = Executors.newSingleThreadExecutor()
@@ -32,6 +33,7 @@ class TrackingService : Service(), LocationListener {
     private val networkRecovery = NetworkRecoveryPolicy()
     private val recoverNetwork = Runnable {
         if (active()) {
+            commandStream?.reconnect()
             // Re-enable the SDK on the new default route, without stopping its process.
             ElderPushRuntime.start(this)
             retryCount = 0
@@ -254,6 +256,7 @@ class TrackingService : Service(), LocationListener {
         try {
             startForeground(1, notification("省电守护正在启动"))
             foregroundReady = true
+            GuardWakeReceiver.cancelRecovery(this)
             running = this
             settings = JSONObject(prefs.getString("settings", "{}") ?: "{}")
             pendingUpload = try { prefs.getString("pending_location", null)?.let { JSONObject(it) } } catch (_: Exception) { null }
@@ -263,6 +266,9 @@ class TrackingService : Service(), LocationListener {
             } catch (_: Exception) { }
             ElderPushRuntime.start(this)
             handler.postDelayed(recoverCID, 5000)
+            commandStream = CommandStream(this, {
+                if (active()) { keepWorking(); handler.post { syncNow() } }
+            }, { handler.post { if (active()) reportPushStateAsync() } }).also { it.start() }
         } catch (_: Exception) {
             prefs.edit().putString("status", "系统未允许恢复定位，请打开应用重新开始守护").apply()
             stopSelf()
@@ -439,8 +445,13 @@ class TrackingService : Service(), LocationListener {
     @Deprecated("Legacy callback")
     override fun onStatusChanged(provider: String?, status: Int, extras: Bundle?) {}
     private fun activeForRecovery() = prefs.getBoolean("tracking_enabled", false) && prefs.getBoolean("push_consent", false)
+    override fun onTaskRemoved(rootIntent: Intent?) {
+        GuardWakeReceiver.recoverAfterLoss(this)
+        super.onTaskRemoved(rootIntent)
+    }
     override fun onDestroy() {
         destroyed = true
+        commandStream?.close()
         if (running === this) running = null
         stopFix()
         handler.removeCallbacksAndMessages(null)
@@ -448,6 +459,7 @@ class TrackingService : Service(), LocationListener {
             try { getSystemService(ConnectivityManager::class.java).unregisterNetworkCallback(networkCallback) } catch (_: Exception) { }
         }
         GuardWakeReceiver.schedule(this, activeForRecovery() && automatic())
+        GuardWakeReceiver.recoverAfterLoss(this)
         if (workWake.isHeld) workWake.release()
         worker.shutdownNow()
         uploader.shutdownNow()

@@ -60,6 +60,7 @@ def diagnose(database, code_root, now=None, live_push=False):
         "server_time_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(now)),
         "push_worker_sha256": hashlib.sha256(body.encode()).hexdigest()[:16] if body else None,
         "ack_retry_code_present": "state IN ('pending','accepted') AND attempts<5" in body,
+        "command_stream_code_present": (Path(code_root) / "backend" / "command_stream.py").is_file(),
         "getui_configured": all(bool(os.getenv(k, "").strip()) for k in ("GETUI_APP_ID", "GETUI_APP_KEY", "GETUI_MASTER_SECRET")),
         "devices": [],
     }
@@ -68,6 +69,7 @@ def diagnose(database, code_root, now=None, live_push=False):
     db = sqlite3.connect(Path(database).resolve().as_uri() + "?mode=ro", uri=True)
     db.row_factory = sqlite3.Row
     try:
+        has_device_state = db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='elder_device_state'").fetchone() is not None
         report["paired_device_count"] = db.execute("SELECT COUNT(*) FROM elders WHERE consent=1").fetchone()[0]
         rows = db.execute("SELECT id,version,applied_version,last_seen,last_location,settings FROM elders WHERE consent=1 ORDER BY created LIMIT 20").fetchall()
         for index, elder in enumerate(rows, 1):
@@ -95,6 +97,12 @@ def diagnose(database, code_root, now=None, live_push=False):
                 "request": None,
                 "location_hint": None,
             }
+            if has_device_state:
+                state = db.execute("SELECT payload,updated_at FROM elder_device_state WHERE elder_id=?", (eid,)).fetchone()
+                observed = json.loads(state["payload"]) if state else {}
+                fields = ("precise_location", "background_location", "battery_unrestricted", "notifications", "location_enabled", "network_location", "guard_enabled", "service_running", "command_stream_connected")
+                row["phone_state_at_last_report"] = {key: observed[key] for key in fields if type(observed.get(key)) is bool}
+                row["phone_state_age_seconds"] = age(state["updated_at"], now) if state else None
             if request:
                 row["request"] = {
                     "state": request["state"],

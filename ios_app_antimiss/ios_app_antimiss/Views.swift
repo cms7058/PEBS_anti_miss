@@ -529,6 +529,7 @@ struct RemoteDeviceSettingsView: View {
                 stateRow("系统网络辅助", state.network_location)
                 stateRow("守护开关", state.guard_enabled)
                 stateRow("守护服务运行", state.service_running)
+                if let connected = state.command_stream_connected { stateRow("备用指令通道", connected) }
                 Text("手机已应用间隔：\(state.automatic_interval)秒 · 设置版本 \(state.settings_version)/\(elder.version)")
                     .font(.caption).foregroundStyle(state.settings_version == elder.version ? Color.secondary : Color.orange)
             } else { Text("尚未收到手机权限状态，请安装老人端0.1.11及以上并打开一次。").font(.caption).foregroundStyle(.orange) }
