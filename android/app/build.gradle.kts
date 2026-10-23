@@ -9,8 +9,8 @@ android {
         applicationId = "cn.familyguard.elder"
         minSdk = 26
         targetSdk = 35
-        versionCode = 9
-        versionName = "0.1.8"
+        versionCode = 10
+        versionName = "0.1.9"
         manifestPlaceholders["GETUI_APPID"] = "NtGxfjmcjPAb27hjz2R1e1"
         buildConfigField("String", "GETUI_APP_ID", "\"NtGxfjmcjPAb27hjz2R1e1\"")
     }

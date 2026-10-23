@@ -116,6 +116,7 @@ class TrackingService : Service(), LocationListener {
     }
     companion object {
         private var running: TrackingService? = null
+        fun isRunning(): Boolean = running?.let { it.foregroundReady && it.active() } == true
         fun signal(): Boolean {
             val service = running ?: return false
             android.util.Log.i("FamilyGuard", "command signal received; service running")
