@@ -1,16 +1,25 @@
 const api=require('../../utils/api'),ui=require('../../utils/ui'),model=require('../../utils/model');
 Page({
- data:{ elder:null,busy:false,error:'',code:'',expires:'',markers:[],circles:[],hasMap:false,mapCenter:null,lastRefresh:'',alertError:'',showDetails:false },
- onLoad(query){this.id=query.id;this.visible=false;this.sequence=0;},
- onShow(){if(!ui.requireLogin())return;this.visible=true;this.refresh();this.alertTimer=setInterval(()=>{
+ data:{ elder:null,busy:false,error:'',code:'',expires:'',markers:[],circles:[],hasMap:false,mapCenter:null,lastRefresh:'',alertError:'',showDetails:false,queryWaiting:false,queryError:'' },
+ onLoad(query){this.id=query.id;this.visible=false;this.sequence=0;this.queryEpoch=0;this.query=null;},
+ onShow(){if(!ui.requireLogin())return;this.visible=true;
+   Promise.resolve(this.refresh()).then(()=>{if(this.visible)this.resumeQuery();});
+   clearInterval(this.alertTimer);this.alertTimer=setInterval(()=>{
    if(!this.data.busy)this.loadAlerts().catch(error=>{if(this.visible)this.setData({alertError:error.message||'提醒同步失败'});});
  },15000);},
  onHide(){this.stop();},onUnload(){this.stop();},
- stop(){this.visible=false;this.sequence++;clearTimeout(this.queryTimer);clearInterval(this.alertTimer);},
- onPullDownRefresh(){this.refresh().finally(()=>wx.stopPullDownRefresh());},
+ stop(){this.visible=false;this.sequence++;this.pauseQuery();clearInterval(this.alertTimer);},
+ pauseQuery(){this.queryEpoch++;clearTimeout(this.queryTimer);this.queryTimer=null;this.setData({queryWaiting:false});},
+ finishQuery(message=''){this.pauseQuery();this.query=null;this.setData({queryError:message});},
+ onPullDownRefresh(){Promise.resolve(this.refresh()).finally(()=>wx.stopPullDownRefresh());},
  async load(){const sequence=++this.sequence;const elder=await api.request(api.elderPath(this.id));
    if(!this.visible||sequence!==this.sequence)return;
    this.setData(Object.assign({elder:model.decorate(elder),lastRefresh:new Date().toLocaleTimeString()},model.mapData(elder)));
+   if(elder.location_request && !this.pendingRequest(elder.location_request)){
+     if(this.query && elder.location_request.id===this.query.id)this.finishQuery();
+     else if(!this.query)this.setData({queryError:''});
+   }
+   return elder;
  },
  async loadAlerts(){
    const sequence=this.sequence;const updates=await api.request('/alerts');
@@ -18,19 +27,71 @@ Page({
    const item=updates.elders.find(elder=>elder.id===this.id);
    if(item)this.setData({elder:model.decorate(Object.assign({},this.data.elder,{events:item.events})),alertError:''});
  },
- refresh(){return ui.run(this,()=>this.load());},
- locate(){return ui.run(this,async()=>{
-   const result=await api.request(api.elderPath(this.id,'/location-request'),'POST',{});await this.load();
-   this.waitForQuery(result.id,40);
+ refresh(){return ui.run(this,async()=>{
+   try{return await this.load();}
+   catch(error){
+     if(this.query || this.pendingRequest(this.data.elder&&this.data.elder.location_request)){this.queryFailure(error);return;}
+     throw error;
+   }
  });},
- waitForQuery(id,remaining){
-   clearTimeout(this.queryTimer);
+ pendingRequest(request){return !!request && ['pending','received'].includes(request.state);},
+ rememberQuery(request){
+   if(!this.query || this.query.id!==request.id){
+     // Use the server's duration, not its absolute timestamp compared with the phone clock.
+     const duration=Math.max(1000,Math.min(180000,(request.expires-request.requested_at)*1000||180000));
+     this.query={id:request.id,deadline:Date.now()+duration};
+   }
+ },
+ locate(){return ui.run(this,async()=>{
+   const current=this.data.elder&&this.data.elder.location_request;
+   let result=current;
+   if(!this.pendingRequest(current)){
+     try{result=await api.request(api.elderPath(this.id,'/location-request'),'POST',{});}
+     catch(error){
+       if(error.kind!=='network')throw error;
+       // POST may have reached the server while its response was lost. Recover by reading,
+       // never by blindly sending another command or inventing a successful position.
+       let snapshot;try{snapshot=await this.load();}catch(_){throw error;}
+       if(!snapshot || !this.pendingRequest(snapshot.location_request))throw error;
+       result=snapshot.location_request;
+     }
+   }
+   this.rememberQuery(result);
+   if(!this.visible)return;
+   if(this.data.elder)this.setData({elder:model.decorate(Object.assign({},this.data.elder,{location_request:result})),queryError:''});
+   try{await this.load();}catch(error){this.queryFailure(error);}
+   // A successful POST must keep its query even if the first snapshot GET failed.
+   if(this.visible && this.query)this.resumeQuery();
+ });},
+ resumeQuery(){
+   if(!this.visible || !api.session().loggedIn)return;
    const request=this.data.elder&&this.data.elder.location_request;
-   if(!this.visible||remaining<=0||!request||request.id!==id||!this.data.elder.requestWaiting)return;
-   this.queryTimer=setTimeout(async()=>{
-     try{if(this.visible)await this.load();}catch(error){if(this.visible)this.setData({error:error.message||'刷新失败，请重试'});}
-     this.waitForQuery(id,remaining-1);
-   },5000);
+   if(!this.query && this.pendingRequest(request))this.rememberQuery(request);
+   if(!this.query)return;
+   clearTimeout(this.queryTimer);
+   const epoch=++this.queryEpoch;
+   this.setData({queryWaiting:true});
+   this.queryTimer=setTimeout(()=>this.pollQuery(epoch),Math.max(0,Math.min(5000,this.query.deadline-Date.now())));
+ },
+ queryFailure(error){
+   if(!this.visible)return;
+   if([401,403,404].includes(error.status)){
+     this.finishQuery(error.message||'无法读取定位结果');
+     if(error.status===401)ui.requireLogin();
+   }else this.setData({queryError:(error.message||'读取结果失败')+'；等待期间会继续确认结果'});
+ },
+ async pollQuery(epoch){
+   if(!this.visible || epoch!==this.queryEpoch || !this.query)return;
+   this.queryTimer=null;
+   try{await this.load();if(this.visible && epoch===this.queryEpoch)this.setData({queryError:''});}
+   catch(error){if(epoch===this.queryEpoch)this.queryFailure(error);}
+   if(!this.visible || epoch!==this.queryEpoch || !this.query)return;
+   if(Date.now()>=this.query.deadline){
+     // This GET was the final check. Do not fabricate an expired server request.
+     this.finishQuery('本次等待已结束，请点“继续查询结果”或“刷新记录”确认；尚不能确认手机是否返回了位置');
+     return;
+   }
+   this.queryTimer=setTimeout(()=>this.pollQuery(epoch),Math.min(5000,this.query.deadline-Date.now()));
  },
  toggleDetails(){this.setData({showDetails:!this.data.showDetails});},
  openMap(){

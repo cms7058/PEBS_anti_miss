@@ -4,7 +4,7 @@ let token = '';
 let account = '';
 let generation = 0;
 class ApiError extends Error {
-  constructor(message, status) { super(message); this.status = status; }
+  constructor(message, status, kind = 'http') { super(message); this.status = status; this.kind = kind; }
 }
 function session() { return { loggedIn: !!token, name: account, server: base }; }
 function validateServer(value) {
@@ -41,7 +41,13 @@ function request(path, method = 'GET', data, authenticated = true) {
         if (!body || typeof body !== 'object') return reject(new ApiError('后台响应格式无效', 0));
         resolve(body);
       },
-      fail() { reject(new ApiError('无法连接后台。HTTP 体验版请先打开调试并重新进入；HTTPS 服务请检查网络、证书和 request 合法域名配置', 0)); }
+      fail(error) {
+        if(current!==generation)return reject(new ApiError('登录状态已改变，请重试',0));
+        const message=error&&error.errMsg||'';
+        if(/timeout/i.test(message))return reject(new ApiError('后台连接超时，尚未确认定位结果，请稍后重试',0,'network'));
+        if(/domain|url not|ssl|certificate/i.test(message))return reject(new ApiError('微信拦截了服务地址或证书。HTTP 体验版请开启调试并重新进入；HTTPS 请检查合法域名和证书',0,'network'));
+        reject(new ApiError('连接后台失败，请检查手机网络和后台服务；此提示不代表老人手机定位超时',0,'network'));
+      }
     });
   });
 }

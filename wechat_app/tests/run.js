@@ -89,7 +89,7 @@ async function main(){
  await detail.locate();assert.equal(detail.data.error,'');
  assert.equal(detail.data.elder.location_request.state,'pending');
  assert.equal(detail.data.elder.requestWaiting,true);
- assert.match(detail.data.elder.requestLabel,/等待.*新位置/);
+ assert.match(detail.data.elder.requestLabel,/等待.*接收请求/);
  const requestID=detail.data.elder.location_request.id;
  await detail.locate();assert.equal(detail.data.elder.location_request.id,requestID);
  await new Promise(resolve=>{queue.push(resolve);backend.stdin.write(JSON.stringify({advance:181})+'\n');});

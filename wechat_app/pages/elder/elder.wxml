@@ -8,8 +8,9 @@
    <view class="location-content">
     <view class="metrics"><view><view class="metric-caption">手机电量</view><view class="metric-value">{{elder.batteryValue}}</view></view><view><view class="metric-caption">定位误差</view><view class="metric-value">{{elder.accuracyValue}}</view></view><view><view class="metric-caption">位置状态</view><view class="metric-value {{elder.stale ? 'warning' : ''}}">{{elder.stale ? '历史位置' : '已上报'}}</view></view></view>
     <view class="muted">{{elder.lastLabel}}</view>
-    <button class="primary locate-action" bindtap="locate" loading="{{elder.requestWaiting}}" disabled="{{busy || !elder.canRequestPosition || elder.requestWaiting}}">{{elder.requestWaiting ? '正在获取新位置…' : elder.requestTitle}}</button>
+    <button class="primary locate-action" bindtap="locate" loading="{{queryWaiting}}" disabled="{{busy || (!elder.canRequestPosition && !elder.requestWaiting) || queryWaiting}}">{{queryWaiting ? '正在获取新位置…' : elder.requestWaiting ? '继续查询结果' : elder.requestTitle}}</button>
     <view wx:if="{{elder.requestLabel}}" class="muted">{{elder.requestLabel}}</view>
+    <view wx:if="{{queryError}}" class="notice">{{queryError}}</view>
     <view class="map-actions"><button bindtap="refresh" disabled="{{busy}}">↻ 刷新记录</button><button wx:if="{{elder.location}}" bindtap="openMap">打开地图 ↗</button></view>
     <view class="muted small-note">记录读取于 {{lastRefresh}} · 位置与电量为上次采集值</view>
    </view>
