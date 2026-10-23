@@ -64,7 +64,7 @@ class ElderPushWorker:
         s = self.store
         with s.lock, s.db:
             s.db.execute("UPDATE elder_outbox SET state='expired' WHERE expires<=? AND state IN ('pending','accepted')", (s.clock(),))
-            items = s.rows("SELECT * FROM elder_outbox WHERE state='pending' AND next_attempt<=? AND expires>? LIMIT 20", (s.clock(), s.clock()))
+            items = s.rows("SELECT * FROM elder_outbox WHERE state IN ('pending','accepted') AND attempts<5 AND next_attempt<=? AND expires>? LIMIT 20", (s.clock(), s.clock()))
         if not configured():
             return
         started = time.monotonic()
@@ -74,7 +74,7 @@ class ElderPushWorker:
             with s.lock:
                 device = s.one("SELECT p.cid FROM elder_push_devices p JOIN elders e ON e.id=p.elder_id WHERE e.id=? AND e.consent=1 AND p.app_id=?", (item["elder_id"], os.environ["GETUI_APP_ID"].strip()))
                 current = s.one("SELECT generation,state FROM elder_outbox WHERE elder_id=? AND kind=?", (item["elder_id"], item["kind"]))
-            if not device or not current or current["generation"] != item["generation"] or current["state"] != "pending":
+            if not device or not current or current["generation"] != item["generation"] or current["state"] not in ("pending", "accepted"):
                 continue
             state, error = "accepted", None
             try:
@@ -85,7 +85,10 @@ class ElderPushWorker:
             attempts = item["attempts"] + 1
             if state == "pending" and attempts >= 5:
                 state = "failed"
+            # Acceptance is not a phone acknowledgement. Retry hints until /device/commands
+            # confirms receipt, bounded by five sends and the original request expiry.
+            delay = min(60, 20 * 2 ** (attempts - 1)) if state == "accepted" else min(60, 5 * 2 ** attempts)
             with s.lock, s.db:
-                s.db.execute("UPDATE elder_outbox SET state=?,attempts=?,next_attempt=?,last_error=? WHERE elder_id=? AND kind=? AND generation=? AND state='pending'",
-                             (state, attempts, s.clock() + min(60, 5 * 2 ** attempts), error,
+                s.db.execute("UPDATE elder_outbox SET state=?,attempts=?,next_attempt=?,last_error=? WHERE elder_id=? AND kind=? AND generation=? AND state IN ('pending','accepted')",
+                             (state, attempts, s.clock() + delay, error,
                               item["elder_id"], item["kind"], item["generation"]))

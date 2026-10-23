@@ -3,6 +3,23 @@ package cn.familyguard.elder;
 /** Pure policy, testable without a phone; never changes a capture's original timestamp. */
 public final class LocationPolicy {
     private LocationPolicy() {}
+    public static boolean pendingRequest(String id, String completed, double expires, double now) {
+        return !id.isEmpty() && !id.equals(completed) && expires > now;
+    }
+    public static boolean retryFix(int attempts, double expires, double now) {
+        return attempts < 2 && expires - now >= 15;
+    }
+    public static long fixWindow(double expires, double now) {
+        return Math.max(1000L, Math.min(90000L, (long)((expires - now) * 1000)));
+    }
+    public static long sampleInterval(boolean automatic, boolean pending) {
+        return automatic && !pending ? 60000L : 1000L;
+    }
+    public static boolean restartFix(boolean locating, boolean wasAutomatic, boolean automatic,
+                                     boolean wasRequested, boolean pending, String previousID, String nextID) {
+        return locating && (wasAutomatic != automatic || wasRequested != pending ||
+            (pending && !previousID.equals(nextID)));
+    }
     public static boolean fresh(long elapsed, long nowElapsed, long startedElapsed,
                                 long wall, long nowWall, long lastUploaded, float accuracy) {
         return elapsed >= startedElapsed && nowElapsed >= elapsed && nowElapsed - elapsed <= 120000

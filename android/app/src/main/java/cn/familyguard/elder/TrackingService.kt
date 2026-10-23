@@ -21,6 +21,10 @@ import java.util.concurrent.Executors
 class TrackingService : Service(), LocationListener {
     private lateinit var manager: LocationManager
     private val worker = Executors.newSingleThreadExecutor()
+    private val metadata = Executors.newSingleThreadExecutor()
+    private var reporting = false
+    private var lastReport = 0L
+    private var lastReportSignature = ""
     private val uploader = Executors.newSingleThreadExecutor()
     private var pendingUpload: JSONObject? = null
     private var uploadFailures = 0
@@ -49,16 +53,19 @@ class TrackingService : Service(), LocationListener {
     }
     private fun keepWorking() { if (active()) workWake.acquire(150000L) }
     private fun releaseIfIdle() {
-        if (!syncing && (!locating || automaticSampling) && !uploading && !retryScheduled && workWake.isHeld) workWake.release()
+        if (!syncing && (!locating || (automaticSampling && !requestSampling)) && !uploading && !retryScheduled && workWake.isHeld) workWake.release()
     }
     private var locating = false
     private var automaticSampling = false
+    private var requestSampling = false
     private var uploading = false
     private var bestLocation: Location? = null
     private var fixStartedElapsed = 0L
     private var nextFix = 0L
     private var request: JSONObject? = null
     private var completedRequest = ""
+    private var attemptRequestID = ""
+    private var requestAttempts = 0
     private var settings = JSONObject()
     private val fixTimeout: Runnable = object : Runnable {
       override fun run() {
@@ -66,9 +73,15 @@ class TrackingService : Service(), LocationListener {
         if (best != null && active()) uploadLocation(best)
         else {
             android.util.Log.w("FamilyGuard", "fresh fix timed out without sample")
-            if (!automaticSampling) stopFix()
-            else handler.postDelayed(this, 90000)
-            update("本次未取得新位置，请检查定位权限和系统定位；家属可在超时后重试")
+            if (hasPendingRequest() && LocationPolicy.retryFix(requestAttempts, request!!.optDouble("expires"), System.currentTimeMillis()/1000.0)) {
+                stopFix()
+                startFix() // One bounded fresh attempt within this request, never idle polling.
+                update("本次未取得新位置，正在为家属请求重试定位…")
+            } else {
+                if (!automaticSampling) stopFix()
+                else handler.postDelayed(this, 90000)
+                update("本次未取得新位置，请检查定位权限和系统定位；家属可在超时后重试")
+            }
         }
       }
     }
@@ -124,14 +137,17 @@ class TrackingService : Service(), LocationListener {
                 if (result != null) {
                     retryCount = 0
                     settings = result.getJSONObject("settings")
+                    val previousRequestID = request?.optString("id") ?: ""
                     request = result.optJSONObject("location_request")
-                    if (locating && automaticSampling != automatic()) stopFix()
-                    val pending = request?.optString("id")?.let { it != completedRequest } == true
+                    val pending = hasPendingRequest()
+                    val restart = LocationPolicy.restartFix(locating, automaticSampling, automatic(), requestSampling,
+                        pending, previousRequestID, request?.optString("id") ?: "")
+                    if (restart) stopFix()
                     if (!automatic() && !pending) {
                         if (locating) stopFix()
                         if (!uploading) update("按需定位待命中 · 不定时定位，不轮询家属请求")
                     }
-                    if (!locating && !uploading && (pending || (automatic() && SystemClock.elapsedRealtime() >= nextFix))) startFix()
+                    if (!locating && !uploading && (pending || (automatic() && (restart || SystemClock.elapsedRealtime() >= nextFix)))) startFix()
                 } else {
                     update("同步失败：$failure")
                     if (automatic() && !locating && !uploading && SystemClock.elapsedRealtime() >= nextFix) startFix()
@@ -146,9 +162,22 @@ class TrackingService : Service(), LocationListener {
                     // Only bounded recovery for this trigger; no idle polling.
                     handler.postDelayed(automaticTick, 20000)
                 }
+                reportPushStateAsync()
                 releaseIfIdle()
             }
-            if (active()) reportPushState()
+        }
+    }
+    private fun reportPushStateAsync() {
+        val signature = listOf(prefs.getString("push_cid", ""), prefs.getString("push_registration", ""),
+            prefs.getBoolean("push_online", false)).joinToString(":")
+        val now = SystemClock.elapsedRealtime()
+        if (!active() || reporting || (signature == lastReportSignature && now - lastReport < 300000)) return
+        reporting = true
+        lastReport = now
+        lastReportSignature = signature
+        metadata.execute {
+            try { if (active()) reportPushState() }
+            finally { handler.post { reporting = false } }
         }
     }
     private fun reportPushState() {
@@ -219,6 +248,9 @@ class TrackingService : Service(), LocationListener {
         settings.optJSONObject("trip")?.optString("status") == "active"
     // Only called for automatic guard scheduling; on-demand requests bypass the timer.
     private fun interval(): Long = 60000L
+    private fun hasPendingRequest(): Boolean = request?.let {
+        LocationPolicy.pendingRequest(it.optString("id"), completedRequest, it.optDouble("expires", 0.0), System.currentTimeMillis()/1000.0)
+    } ?: false
     private fun startFix() {
         if (!active() || locating || uploading || !hasPermission()) return
         nextFix = SystemClock.elapsedRealtime() + interval()
@@ -227,12 +259,18 @@ class TrackingService : Service(), LocationListener {
         android.util.Log.i("FamilyGuard", "fresh fix started; automatic=${automatic()}; remote=${request != null}")
         locating = true
         automaticSampling = automatic()
+        requestSampling = hasPendingRequest()
+        if (requestSampling) {
+            val id = request!!.getString("id")
+            if (id != attemptRequestID) { attemptRequestID = id; requestAttempts = 0 }
+            requestAttempts++
+        }
         keepWorking()
         var listening = false
         for (provider in listOf(LocationManager.NETWORK_PROVIDER, LocationManager.GPS_PROVIDER)) {
             try {
                 if (manager.allProviders.contains(provider) && manager.isProviderEnabled(provider)) {
-                    manager.requestLocationUpdates(provider, if (automaticSampling) 60000L else 1000L, 0f, this, Looper.getMainLooper())
+                    manager.requestLocationUpdates(provider, LocationPolicy.sampleInterval(automaticSampling, requestSampling), 0f, this, Looper.getMainLooper())
                     listening = true
                 }
             } catch (_: Exception) { }
@@ -241,11 +279,13 @@ class TrackingService : Service(), LocationListener {
             stopFix(); update("系统定位未开启或权限不足，请打开定位设置"); return
         }
         update(if (request != null) "已收到家属请求，正在获取新位置…" else "正在进行定时定位…")
-        handler.postDelayed(fixTimeout, 90000)
+        val window = if (requestSampling) LocationPolicy.fixWindow(request!!.optDouble("expires"), System.currentTimeMillis()/1000.0) else 90000L
+        handler.postDelayed(fixTimeout, window)
     }
     private fun stopFix() {
         locating = false
         automaticSampling = false
+        requestSampling = false
         manager.removeUpdates(this)
         handler.removeCallbacks(fixTimeout)
         releaseIfIdle()
@@ -367,6 +407,7 @@ class TrackingService : Service(), LocationListener {
         if (workWake.isHeld) workWake.release()
         worker.shutdownNow()
         uploader.shutdownNow()
+        metadata.shutdownNow()
         super.onDestroy()
     }
 }

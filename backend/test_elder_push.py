@@ -49,6 +49,62 @@ class ElderPushTests(unittest.TestCase):
         self.assertEqual(self.s.one("SELECT state FROM elder_outbox WHERE kind='settings'")["state"], "pending")
         self.assertEqual(self.s.location_request(self.eid)["id"], request["id"])
 
+    def test_accepted_without_phone_receipt_retries_then_stops_on_receipt(self):
+        self.register()
+        self.call("GET", "/device/commands", token=self.device)
+        self.call("POST", f"/elders/{self.eid}/location-request")
+        self.worker.run_once()
+        self.assertEqual(self.client.send.call_count, 1)
+        self.now += 19
+        self.worker.run_once()
+        self.assertEqual(self.client.send.call_count, 1)
+        self.now += 1
+        self.worker.run_once()
+        self.assertEqual(self.client.send.call_count, 2)
+        self.assertEqual(self.s.location_request(self.eid)["state"], "pending")
+        self.call("GET", "/device/commands", token=self.device)
+        self.now += 61
+        self.worker.run_once()
+        self.assertEqual(self.client.send.call_count, 2)
+        self.assertEqual(self.s.one("SELECT state FROM elder_outbox WHERE kind='location'")["state"], "received")
+
+    def test_accepted_hints_have_a_send_limit_and_original_expiry(self):
+        self.register()
+        for _ in range(7):
+            self.worker.run_once()
+            self.now += 61
+        self.assertEqual(self.client.send.call_count, 5)
+        row = self.s.one("SELECT * FROM elder_outbox WHERE kind='settings'")
+        self.assertEqual(row["attempts"], 5)
+        self.assertEqual(row["state"], "accepted")
+        self.now += 3600
+        self.worker.run_once()
+        self.assertEqual(self.s.one("SELECT state FROM elder_outbox WHERE kind='settings'")["state"], "expired")
+        self.assertEqual(self.client.send.call_count, 5)
+
+    def test_ack_during_accepted_retry_is_not_overwritten(self):
+        self.register()
+        self.worker.run_once()
+        self.now += 20
+        self.client.send.side_effect = lambda *args: self.call("GET", "/device/commands", token=self.device)
+        self.worker.run_once()
+        self.assertEqual(self.s.one("SELECT state FROM elder_outbox")["state"], "received")
+
+    def test_location_completed_during_send_stays_cancelled(self):
+        self.register()
+        self.call("GET", "/device/commands", token=self.device)
+        request = self.call("POST", f"/elders/{self.eid}/location-request")
+        self.now += 1
+        self.client.send.side_effect = lambda *args: self.call("POST", "/device/location", {
+            "lat":31, "lon":121, "accuracy":20, "recorded_at":self.now,
+            "battery":70, "applied_version":0, "request_id":request["id"]}, self.device)
+        self.worker.run_once()
+        self.assertEqual(self.s.location_request(self.eid)["state"], "completed")
+        self.assertEqual(self.s.one("SELECT state FROM elder_outbox WHERE kind='location'")["state"], "cancelled")
+        self.now += 30
+        self.worker.run_once()
+        self.assertEqual(self.client.send.call_count, 1)
+
     def test_missing_credentials_and_device_do_not_claim_acceptance(self):
         self.call("POST", f"/elders/{self.eid}/location-request")
         self.worker.run_once()
