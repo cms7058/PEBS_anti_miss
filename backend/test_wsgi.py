@@ -102,8 +102,10 @@ class CloudEntryTests(unittest.TestCase):
                 live.close()
 
     def test_scheduler_file_lock_allows_only_one_monitor(self):
-        with tempfile.TemporaryDirectory() as folder, patch.dict(os.environ, {"DATABASE_PATH": folder + "/state.sqlite3"}), patch("backend.wsgi.PushWorker.run_once"), patch("backend.wsgi.ElderPushWorker.run_once"):
+        with tempfile.TemporaryDirectory() as folder, patch.dict(os.environ, {"DATABASE_PATH": folder + "/state.sqlite3"}), patch("backend.wsgi.PushWorker.run_once"), patch("backend.elder_push.ElderPushWorker.run_once"):
             first_store, second_store = Mock(), Mock()
+            first_store.command_ready = threading.Event()
+            second_store.command_ready = threading.Event()
             first_tick, second_tick = threading.Event(), threading.Event()
             first_store.tick.side_effect = first_tick.set
             second_store.tick.side_effect = second_tick.set
@@ -118,6 +120,27 @@ class CloudEntryTests(unittest.TestCase):
             finally:
                 first.stop()
                 if second: second.stop()
+
+    def test_command_push_does_not_wait_for_alert_io_or_monitor_tick(self):
+        from queue import Queue
+        calls = Queue()
+        blocked, release = threading.Event(), threading.Event()
+        def slow_alert():
+            blocked.set()
+            release.wait(3)
+        with tempfile.TemporaryDirectory() as folder, patch.dict(os.environ, {"DATABASE_PATH": folder + "/state.sqlite3"}), \
+                patch("backend.wsgi.PushWorker.run_once", side_effect=slow_alert), \
+                patch("backend.elder_push.ElderPushWorker.run_once", side_effect=lambda: calls.put(True)):
+            app = Application(self.store)
+            try:
+                self.assertTrue(blocked.wait(2))
+                calls.get(timeout=1)  # Initial command scan.
+                self.store.command_ready.set()  # Same wakeup used by enqueue_elder.
+                self.assertTrue(calls.get(timeout=0.75))
+                self.assertFalse(release.is_set())
+            finally:
+                release.set()
+                app.stop()
 
 
 if __name__ == "__main__":

@@ -13,7 +13,7 @@ import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlsplit
-from backend.elder_push import ElderPushWorker, configured as elder_push_configured
+from backend.elder_push import ElderPushWorker, run_command_push, configured as elder_push_configured
 
 
 MAX_FENCE_SAMPLE_GAP = 180
@@ -59,6 +59,7 @@ class Store:
     def __init__(self, path, clock=time.time):
         self.clock = clock
         self.lock = threading.RLock()
+        self.command_ready = threading.Event()
         self.db = sqlite3.connect(path, check_same_thread=False)
         self.db.row_factory = sqlite3.Row
         self.db.executescript("""
@@ -135,6 +136,7 @@ class Store:
     def enqueue_elder(self, elder_id, kind, ttl, generation=None):
         self.db.execute("INSERT OR REPLACE INTO elder_outbox(elder_id,kind,generation,expires,state) VALUES(?,?,?,?, 'pending')",
                         (elder_id, kind, generation or secrets.token_hex(12), self.clock() + ttl))
+        self.command_ready.set()
 
     def elder_push_status(self, elder_id):
         device = self.one("SELECT app_id FROM elder_push_devices WHERE elder_id=?", (elder_id,))
@@ -614,14 +616,14 @@ def main():
         raise
     Handler.store = Store(os.getenv("DATABASE_PATH", "family.sqlite3"))
     push = PushWorker(Handler.store)
-    elder_push = ElderPushWorker(Handler.store)
     stopped = threading.Event()
+    command_worker = threading.Thread(target=run_command_push, args=(Handler.store, stopped), daemon=True)
+    command_worker.start()
     def monitor():
         while not stopped.is_set():
             try:
                 Handler.store.tick()
                 push.run_once()
-                elder_push.run_once()
             except Exception as exc:
                 print("Monitor error:", type(exc).__name__, flush=True)
             stopped.wait(15)
@@ -634,9 +636,11 @@ def main():
         print("\n后台已停止。", flush=True)
     finally:
         stopped.set()
+        Handler.store.command_ready.set()
         server.server_close()
         worker.join(timeout=1)
-        if not worker.is_alive():
+        command_worker.join(timeout=1)
+        if not worker.is_alive() and not command_worker.is_alive():
             Handler.store.db.close()
     return 0
 

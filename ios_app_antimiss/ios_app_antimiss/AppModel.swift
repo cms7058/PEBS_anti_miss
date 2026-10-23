@@ -141,6 +141,19 @@ final class NoRedirect: NSObject, URLSessionTaskDelegate {
             throw error
         }
     }
+    // Query only this elder; health checks and other family records must not delay a fix.
+    func refreshElder(_ id: String) async throws {
+        let session = token, address = server
+        refreshSequence += 1
+        let sequence = refreshSequence
+        let result: Elder = try await request("/elders/\(id)")
+        try Task.checkCancellation()
+        guard token == session, server == address, sequence == refreshSequence,
+              let index = elders.firstIndex(where: { $0.id == id }) else { return }
+        elders[index] = result
+        lastRefresh = Date()
+        refreshFailure = nil
+    }
     func refreshAlerts() async throws {
         guard !token.isEmpty else { return }
         let session = token, address = server, snapshot = refreshSequence

@@ -3,6 +3,11 @@ import cn.familyguard.elder.LocationPolicy;
 public final class LocationPolicyChecks {
     private static void check(boolean value, String message) { if (!value) throw new AssertionError(message); }
     public static void main(String[] args) {
+        check(LocationPolicy.readyToUpload(30, true, 0), "precise fresh sample uploads immediately");
+        check(!LocationPolicy.readyToUpload(500, true, 1499), "allow a short window for improved accuracy");
+        check(LocationPolicy.readyToUpload(500, true, 1500), "requested coarse fix must not wait 90 seconds");
+        check(!LocationPolicy.readyToUpload(500, false, 1500), "quick query must not relax automatic guard accuracy");
+        check(!LocationPolicy.readyToUpload(10001, true, 1500), "do not queue an accuracy rejected by server");
         long now = 1800000000000L;
         check(LocationPolicy.fresh(5100, 5200, 5000, now, now, now - 1000, 30), "fresh moving fix must be accepted");
         check(LocationPolicy.fresh(5100, 5200, 5000, now + 5000, now, now - 1000, 30), "small GPS/wall-clock skew must not discard the capture");

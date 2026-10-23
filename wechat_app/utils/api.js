@@ -23,14 +23,14 @@ function configure(value) {
   const next = validateServer(value);
   if (next !== base) { clear(); base = next; }
 }
-function request(path, method = 'GET', data, authenticated = true) {
+function request(path, method = 'GET', data, authenticated = true, timeoutMs = 20000) {
   const current = generation;
   let server;
   try { server = validateServer(base); } catch (error) { return Promise.reject(error); }
   return new Promise((resolve, reject) => {
     const header = { 'Content-Type': 'application/json' };
     if (authenticated && token) header.Authorization = `Bearer ${token}`;
-    wx.request({ url: server + path, method, data, header, timeout: 20000,
+    wx.request({ url: server + path, method, data, header, timeout: Math.max(1,Math.min(20000,timeoutMs)),
       success(response) {
         if (current !== generation) return reject(new ApiError('登录状态已改变，请重试', 0));
         const body = response.data;

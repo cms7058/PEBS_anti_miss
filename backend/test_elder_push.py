@@ -32,6 +32,17 @@ class ElderPushTests(unittest.TestCase):
     def register(self):
         return self.call("POST", "/device/push", {"cid": "a" * 32, "app_id": ENV["GETUI_APP_ID"]}, self.device)
 
+    def test_new_location_request_wakes_dispatcher_and_precedes_settings(self):
+        self.register()
+        self.s.command_ready.clear()
+        self.call("POST", f"/elders/{self.eid}/location-request")
+        self.assertTrue(self.s.command_ready.is_set())
+        sent = []
+        self.client.send.side_effect = lambda *_: sent.append(self.s.rows("SELECT kind FROM elder_outbox WHERE attempts>0"))
+        self.worker.run_once()
+        self.assertEqual(sent[0], [])
+        self.assertEqual(sent[1], [{"kind": "location"}])
+
     def test_location_and_settings_queue_and_receive(self):
         self.register()
         request = self.call("POST", f"/elders/{self.eid}/location-request")

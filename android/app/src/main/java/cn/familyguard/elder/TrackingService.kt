@@ -96,6 +96,13 @@ class TrackingService : Service(), LocationListener {
     private var attemptRequestID = ""
     private var requestAttempts = 0
     private var settings = JSONObject()
+    private val quickRequestedFix = Runnable {
+        // Prefer a quick, honestly labelled coarse fix over waiting 90s for GPS accuracy.
+        // It is still a new sample from this capture, never a last-known location.
+        if (active() && locating && !uploading && hasPendingRequest()) bestLocation?.let {
+            if (LocationPolicy.readyToUpload(it.accuracy, true, SystemClock.elapsedRealtime() - fixStartedElapsed)) uploadLocation(it)
+        }
+    }
     private val fixTimeout: Runnable = object : Runnable {
       override fun run() {
         val best = bestLocation
@@ -311,6 +318,7 @@ class TrackingService : Service(), LocationListener {
         update(if (request != null) "已收到家属请求，正在获取新位置…" else "正在进行定时定位…")
         val window = if (requestSampling) LocationPolicy.fixWindow(request!!.optDouble("expires"), System.currentTimeMillis()/1000.0) else 90000L
         handler.postDelayed(fixTimeout, window)
+        if (requestSampling) handler.postDelayed(quickRequestedFix, 1500)
     }
     private fun stopFix() {
         locating = false
@@ -318,21 +326,23 @@ class TrackingService : Service(), LocationListener {
         requestSampling = false
         manager.removeUpdates(this)
         handler.removeCallbacks(fixTimeout)
+        handler.removeCallbacks(quickRequestedFix)
         releaseIfIdle()
     }
     override fun onLocationChanged(location: Location) {
         if (!active() || !locating || uploading) return
         val elapsed = location.elapsedRealtimeNanos / 1000000
-        if (!location.hasAccuracy() || !LocationPolicy.fresh(elapsed, SystemClock.elapsedRealtime(), fixStartedElapsed,
+        if (!location.hasAccuracy() || location.accuracy > 10000 || !LocationPolicy.fresh(elapsed, SystemClock.elapsedRealtime(), fixStartedElapsed,
                 location.time, System.currentTimeMillis(), prefs.getLong("last_uploaded_capture", 0), location.accuracy)) return
         val best = bestLocation
         val moving = location.hasSpeed() && location.speed > 0.7f
         if (best == null || LocationPolicy.prefer(location.accuracy, elapsed, best.accuracy, best.elapsedRealtimeNanos / 1000000, moving)) bestLocation = Location(location)
         // Give GPS time to improve a coarse network fix before accepting it.
-        if (location.accuracy <= 100) uploadLocation(location)
+        if (LocationPolicy.readyToUpload(location.accuracy, hasPendingRequest(), SystemClock.elapsedRealtime() - fixStartedElapsed)) uploadLocation(location)
     }
     private fun uploadLocation(location: Location) {
         if (!active()) return
+        handler.removeCallbacks(quickRequestedFix)
         if (automaticSampling) {
             // Keep OS location subscriptions while rules need monitoring. Handler timers alone
             // cannot reliably wake a sleeping CPU; provider callbacks drive subsequent samples.

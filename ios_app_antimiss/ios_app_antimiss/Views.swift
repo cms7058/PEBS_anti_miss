@@ -399,44 +399,79 @@ struct DataSyncStatusView: View {
 struct RemoteLocationView: View {
     @EnvironmentObject var model: AppModel
     let elder: Elder
-    @State private var requestedID: String?
+    @State private var queryRun = 0
+    @State private var queryWaiting = false
+    @State private var queryMessage: String?
+    private var pending: Bool { ["pending", "received"].contains(elder.location_request?.state ?? "") }
     var body: some View {
         Button {
-            Task { await model.perform {
-                let result: LocationRequest = try await model.request("/elders/\(elder.id)/location-request", method: "POST", body: [:])
-                try await model.refresh()
-                requestedID = result.id
-            } }
+            queryMessage = nil
+            queryRun += 1
+            queryWaiting = true
         } label: {
             HStack {
-                if elder.location_request?.waiting == true { ProgressView().tint(.white) }
+                if queryWaiting { ProgressView().tint(.white) }
                 else { Image(systemName: "location.fill") }
-                Text(elder.location_request?.waiting == true ? "正在获取新位置…" : elder.positionRequestTitle).fontWeight(.semibold)
+                Text(queryWaiting ? "正在查询 · 最多5秒" : pending ? "查询本次结果" : elder.positionRequestTitle).fontWeight(.semibold)
             }.frame(maxWidth: .infinity).padding(.vertical, 8)
         }.buttonStyle(.borderedProminent).controlSize(.large)
-            .disabled(model.busy || !elder.canRequestPosition || elder.location_request?.waiting == true)
-        if let label = elder.positionRequestLabel {
-            Label(label, systemImage: elder.location_request?.waiting == true ? "clock" : elder.location_request?.state == "completed" ? "checkmark.circle" : "exclamationmark.circle")
-                .font(.caption).foregroundStyle(elder.location_request?.state == "expired" ? Color.orange : Color.secondary)
+            .disabled(model.busy || (!elder.canRequestPosition && !pending) || queryWaiting)
+        if let message = queryMessage {
+            Label(message, systemImage: "info.circle").font(.caption).foregroundStyle(.secondary)
+        } else if pending && !queryWaiting {
+            Text("上次请求仍在后台处理，可查询结果；地图保留上次采集的位置。").font(.caption).foregroundStyle(.secondary)
+        } else if let label = elder.positionRequestLabel {
+            Label(label, systemImage: elder.location_request?.state == "completed" ? "checkmark.circle" : "clock")
+                .font(.caption).foregroundStyle(.secondary)
         }
         DisclosureGroup("连接与定位说明") {
             VStack(alignment: .leading, spacing: 8) {
                 if let status = elder.pushDescription { Text(status) }
                 if let diag = elder.device_diagnostics { Text("老人端 \(diag.app_version) · 状态上报于 \(timeLabel(diag.updated_at))") }
-                Text("获取新位置会请求老人手机采集；刷新记录只读取服务端已有数据。")
+                Text("每次查询最多等待5秒。手机离线或定位尚未完成时不会用旧位置冒充新位置；后台请求有效期间仍可查询结果。")
             }.font(.caption).foregroundStyle(.secondary).padding(.top, 6)
         }.font(.caption).tint(.secondary)
-            .task(id: requestedID) {
-                guard let id = requestedID else { return }
-                // Bounded polling only for the query explicitly started in this view.
-                for _ in 0..<40 {
-                    guard let request = model.elders.first(where: { $0.id == elder.id })?.location_request,
-                          request.id == id, request.waiting else { return }
-                    do { try await Task.sleep(for: .seconds(5)); try Task.checkCancellation() }
-                    catch { return }
-                    do { try await model.refresh() }
-                    catch { if Task.isCancelled { return } }
-                }
+        // Independent UI deadline: even a stalled POST/GET cannot keep the spinner running.
+        .task(id: queryWaiting ? queryRun : nil) {
+            guard queryWaiting else { return }
+            let run = queryRun
+            do { try await Task.sleep(for: .seconds(5)) } catch { return }
+            guard queryWaiting, queryRun == run else { return }
+            let current = model.elders.first(where: { $0.id == elder.id })?.location_request
+            let state = current?.state
+            if let current, !["pending", "received"].contains(current.state) {
+                queryMessage = current.label
+            } else {
+            queryMessage = state == "received" ? "5秒内未取得新位置：手机已收到请求，定位仍在进行。可稍后查询结果。"
+                : state == "pending" ? "5秒内未收到手机响应。请稍后查询结果，地图仍为上次采集位置。"
+                : "5秒内未确认定位结果，请检查后台连接或稍后查询。"
             }
+            queryWaiting = false
+        }
+        .task(id: queryWaiting ? queryRun : nil) {
+            guard queryWaiting else { return }
+            let run = queryRun
+            do {
+                if !pending {
+                    let _: LocationRequest = try await model.request("/elders/\(elder.id)/location-request", method: "POST", body: [:])
+                    try Task.checkCancellation()
+                }
+                while !Task.isCancelled && queryWaiting && queryRun == run {
+                    try await model.refreshElder(elder.id)
+                    let current = model.elders.first(where: { $0.id == elder.id })?.location_request
+                    if let current, !["pending", "received"].contains(current.state) {
+                        queryMessage = current.label
+                        queryWaiting = false
+                        return
+                    }
+                    try await Task.sleep(for: .milliseconds(400))
+                }
+            } catch {
+                guard !Task.isCancelled, queryRun == run, queryWaiting else { return }
+                queryMessage = error.localizedDescription + "；尚未确认本次定位结果。"
+                queryWaiting = false
+            }
+        }
+        .onDisappear { queryWaiting = false }
     }
 }

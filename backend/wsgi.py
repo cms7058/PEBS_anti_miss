@@ -9,7 +9,7 @@ import time
 from http import HTTPStatus
 from pathlib import Path
 
-from backend.elder_push import ElderPushWorker
+from backend.elder_push import run_command_push
 from backend.server import APIError, PushWorker, Store, require
 
 
@@ -31,6 +31,7 @@ class Application:
 
     def stop(self):
         self.stopped.set()
+        self.store.command_ready.set()
         if self.monitor:
             self.monitor.join(timeout=2)
 
@@ -49,16 +50,19 @@ class Application:
                 return
             try:
                 push = PushWorker(self.store)
-                elder_push = ElderPushWorker(self.store)
+                command_worker = threading.Thread(target=run_command_push, args=(self.store, self.stopped), daemon=True)
+                command_worker.start()
                 while not self.stopped.is_set():
                     try:
                         self.store.tick()
                         push.run_once()
-                        elder_push.run_once()
                     except Exception as exc:
                         print("Monitor error:", type(exc).__name__, flush=True)
                     self.stopped.wait(15)
             finally:
+                # Keep scheduler ownership until any in-flight Getui call has exited.
+                if 'command_worker' in locals():
+                    command_worker.join()
                 fcntl.flock(lock, fcntl.LOCK_UN)
 
     def client_ip(self, environ):

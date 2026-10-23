@@ -240,6 +240,10 @@ class MainActivity : Activity() {
             val notifications = getSystemService(android.app.NotificationManager::class.java)
             notifications.areNotificationsEnabled() && notifications.getNotificationChannel("tracking")?.importance != android.app.NotificationManager.IMPORTANCE_NONE
         }) { startActivity(Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE, packageName)) }
+        permissionTile(third, "网络辅助", android.R.drawable.ic_menu_compass, "可使用", "不可用", {
+            val manager = getSystemService(LocationManager::class.java)
+            manager.allProviders.contains(LocationManager.NETWORK_PROVIDER) && manager.isProviderEnabled(LocationManager.NETWORK_PROVIDER)
+        }) { startActivity(Intent(Settings.ACTION_LOCATION_SOURCE_SETTINGS)) }
         permissionCard.addView(text("点击卡片可设置。手机的启动管理还需允许自启动、关联启动和后台活动。", 16f, muted).apply { setPadding(0, dp(12), 0, 0) })
 
         val details = card(content)
@@ -257,7 +261,7 @@ class MainActivity : Activity() {
         retryPush = button(detailBody, "重新连接推送") { startTracking() }
         button(detailBody, "应用与启动设置") { appSettings() }
         button(detailBody, "个推隐私说明") { startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://docs.getui.com/privacy"))) }
-        detailBody.addView(text("无围栏和进行中的行程时，只响应家属请求；开启围栏或行程后自动定位。锁屏后仍会尝试守护，但系统限制、网络中断或强制停止可能影响响应。关闭守护后不再共享新位置。", 16f, muted).apply { setPadding(0, dp(16), 0, 0) })
+        detailBody.addView(text("定位同时使用GPS与系统网络辅助；基站/Wi-Fi定位依赖系统支持，误差可能较大。无围栏和进行中的行程时，只响应家属请求；开启围栏或行程后自动定位。锁屏后仍会尝试守护，但系统限制、网络中断或强制停止可能影响响应。关闭守护后不再共享新位置。", 16f, muted).apply { setPadding(0, dp(16), 0, 0) })
         button(content, "解除家人绑定") { confirmUnpair() }.apply { setTextColor(amber); background = shape(Color.rgb(255, 240, 217), 15) }
         space(content, 20)
     }

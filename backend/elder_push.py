@@ -64,7 +64,7 @@ class ElderPushWorker:
         s = self.store
         with s.lock, s.db:
             s.db.execute("UPDATE elder_outbox SET state='expired' WHERE expires<=? AND state IN ('pending','accepted')", (s.clock(),))
-            items = s.rows("SELECT * FROM elder_outbox WHERE state IN ('pending','accepted') AND attempts<5 AND next_attempt<=? AND expires>? LIMIT 20", (s.clock(), s.clock()))
+            items = s.rows("SELECT * FROM elder_outbox WHERE state IN ('pending','accepted') AND attempts<5 AND next_attempt<=? AND expires>? ORDER BY CASE WHEN kind='location' THEN 0 ELSE 1 END,next_attempt LIMIT 20", (s.clock(), s.clock()))
         if not configured():
             return
         started = time.monotonic()
@@ -92,3 +92,19 @@ class ElderPushWorker:
                 s.db.execute("UPDATE elder_outbox SET state=?,attempts=?,next_attempt=?,last_error=? WHERE elder_id=? AND kind=? AND generation=? AND state IN ('pending','accepted')",
                              (state, attempts, s.clock() + delay, error,
                               item["elder_id"], item["kind"], item["generation"]))
+
+
+def run_command_push(store, stopped, worker=None):
+    """Wake on enqueue; 1s server-only fallback also handles due retries/other processes.
+
+    Separate from alert monitoring so APNs I/O and the 15s tick cannot delay commands.
+    API handlers never wait for the upstream push service.
+    """
+    worker = worker or ElderPushWorker(store)
+    while not stopped.is_set():
+        store.command_ready.clear()
+        try:
+            worker.run_once()
+        except Exception as exc:
+            print("Command push error:", type(exc).__name__, flush=True)
+        store.command_ready.wait(1)
