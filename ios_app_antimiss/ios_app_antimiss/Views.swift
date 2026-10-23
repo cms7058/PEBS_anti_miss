@@ -455,17 +455,17 @@ struct RemoteLocationView: View {
             guard queryFollowing else { return }
             let run = queryRun
             do {
-                if !pending {
-                    do {
-                        let _: LocationRequest = try await model.request("/elders/\(elder.id)/location-request", method: "POST", body: [:])
-                    } catch {
-                        if Task.isCancelled { throw error }
-                        try await model.refreshElder(elder.id)
-                        guard let request = model.elders.first(where: { $0.id == elder.id })?.location_request,
-                              ["pending", "received"].contains(request.state) else { throw error }
-                    }
-                    try Task.checkCancellation()
+                // The server reuses a live request, or creates one if the cached request expired.
+                // A previous local timeout can leave this view holding an old pending snapshot.
+                do {
+                    let _: LocationRequest = try await model.request("/elders/\(elder.id)/location-request", method: "POST", body: [:])
+                } catch {
+                    if Task.isCancelled { throw error }
+                    try await model.refreshElder(elder.id)
+                    guard let request = model.elders.first(where: { $0.id == elder.id })?.location_request,
+                          ["pending", "received"].contains(request.state) else { throw error }
                 }
+                try Task.checkCancellation()
                 while !Task.isCancelled && queryFollowing && queryRun == run {
                     do { try await model.refreshElder(elder.id) }
                     catch { if Task.isCancelled { return }; queryMessage = "后台连接暂时失败，正在继续读取同一次请求的结果。" }

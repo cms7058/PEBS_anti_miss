@@ -46,6 +46,12 @@ async function main(){
  };
  await p.locate();assert.equal(p.data.queryWaiting,true);complete();await tick(400);
  assert.equal(p.data.elder.location_request.state,'completed');assert.equal(postCount,1);p.stop();api.request=normalRequest;
+ // A local waiting limit can leave a pending snapshot after the server expired it.
+ // One explicit tap must start a new request, without requiring a separate refresh tap.
+ reset();p=page();p.data.elder.location_request={...request,id:'old-query',state:'pending'};
+ state.location_request={...request,id:'old-query',state:'expired'};
+ await p.locate();assert.equal(postCount,1);assert.equal(p.data.elder.location_request.id,'query-1');
+ assert.equal(p.data.elder.location_request.state,'pending');assert.equal(p.data.queryTracking,true);p.stop();
  // Hide cancels timers; returning after the original budget does not restart a 3min spinner.
  reset();p=page();await p.locate();p.onHide();assert.equal(jobs.size,0);await tick(30000);
  p.onShow();await settle();assert.equal(p.data.queryWaiting,false);assert.equal(postCount,1);

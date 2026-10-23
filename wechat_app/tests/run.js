@@ -92,6 +92,20 @@ async function main(){
  assert.match(detail.data.elder.requestLabel,/等待.*接收请求/);
  const requestID=detail.data.elder.location_request.id;
  await detail.locate();assert.equal(detail.data.elder.location_request.id,requestID);
+ // A fresh user tap reuses an actually live server request and its original expiry.
+ const originalExpiry=detail.data.elder.location_request.expires;
+ detail.finishQuery();
+ const postCount=()=>requests.filter(r=>r.method==='POST'&&r.url.endsWith('/location-request')).length;
+ let before=postCount();await detail.locate();assert.equal(postCount(),before+1);
+ assert.equal(detail.data.elder.location_request.id,requestID);
+ assert.equal(detail.data.elder.location_request.expires,originalExpiry);
+ // Keep the stale pending snapshot as the server expires it: retry needs one tap.
+ detail.finishQuery();
+ await new Promise(resolve=>{queue.push(resolve);backend.stdin.write(JSON.stringify({advance:181})+'\n');});
+ assert.equal(detail.data.elder.location_request.state,'pending');
+ before=postCount();await detail.locate();assert.equal(postCount(),before+1);
+ assert.notEqual(detail.data.elder.location_request.id,requestID);
+ assert.equal(detail.data.elder.location_request.state,'pending');
  await new Promise(resolve=>{queue.push(resolve);backend.stdin.write(JSON.stringify({advance:181})+'\n');});
  await detail.load();assert.equal(detail.data.elder.location_request.state,'expired');
  assert.equal(detail.data.elder.requestWaiting,false);assert.match(detail.data.elder.requestLabel,/超时/);

@@ -54,17 +54,15 @@ Page({
    this.resumeQuery(); // Fast progress first; keep following this same request afterward.
    const epoch=this.queryEpoch;
    try{
-     const current=this.data.elder&&this.data.elder.location_request;
-     let result=current;
-     if(!this.pendingRequest(current)){
-       try{result=await api.request(api.elderPath(this.id,'/location-request'),'POST',{},true,5000);}
-       catch(error){
-         if(!this.visible||epoch!==this.queryEpoch)return;
-         if(error.kind!=='network')throw error;
-         const snapshot=await this.load();
-         if(!snapshot || !this.pendingRequest(snapshot.location_request))throw error;
-         result=snapshot.location_request;
-       }
+     // The server deduplicates a live request and replaces an expired cached one.
+     let result;
+     try{result=await api.request(api.elderPath(this.id,'/location-request'),'POST',{},true,5000);}
+     catch(error){
+       if(!this.visible||epoch!==this.queryEpoch)return;
+       if(error.kind!=='network')throw error;
+       const snapshot=await this.load();
+       if(!snapshot || !this.pendingRequest(snapshot.location_request))throw error;
+       result=snapshot.location_request;
      }
      if(!this.visible||epoch!==this.queryEpoch||!this.query)return;
      this.rememberQuery(result);
