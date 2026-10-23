@@ -448,11 +448,11 @@ class Store:
             if fence is not None:
                 require(isinstance(fence, dict), "围栏格式错误")
                 coordinates(fence)
-                number(fence, "radius", 100, 10000)
+                number(fence, "radius", 1, 10000)
             if trip is not None:
                 require(isinstance(trip, dict), "行程格式错误")
                 coordinates(trip)
-                number(trip, "radius", 100, 2000)
+                number(trip, "radius", 1, 2000)
                 require(isinstance(trip.get("name"), str) and 1 <= len(trip["name"]) <= 100, "请填写目的地名称")
                 require(trip.get("status") in ("active", "arrived", "cancelled"), "行程状态无效")
                 old_trip = json.loads(elder["settings"]).get("trip")

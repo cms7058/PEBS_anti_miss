@@ -28,6 +28,13 @@ function decorate(elder) {
     settingsPushFailed: !!(elder.elder_push && elder.elder_push.settings_delivery && elder.elder_push.settings_delivery.state === 'failed'),
     lastLabel: p ? time(p.recorded_at) : '尚未收到位置，请在老人端开启守护',
     stale: !p || Date.now()/1000-p.recorded_at > elder.settings.offline_after,
+    batteryValue: p ? `${Math.round(p.battery)}%` : '—',
+    accuracyValue: p ? `${Math.round(p.accuracy)} 米` : '—',
+    modeTitle: automatic ? '自动守护' : '按需查询',
+    tripActive: !!elder.settings.trip && ['active','arrived'].includes(elder.settings.trip.status),
+    fenceRadius: elder.settings.fence ? `${elder.settings.fence.radius} 米` : '未设置',
+    tripRadius: elder.settings.trip ? `${elder.settings.trip.radius} 米` : '未设置',
+    smallRadius: !!p && (!!elder.settings.fence && elder.settings.fence.radius < p.accuracy || !!elder.settings.trip && elder.settings.trip.radius < p.accuracy),
     accuracyLabel: p ? `精度约 ${Math.round(p.accuracy)} 米 · 电量 ${Math.round(p.battery)}%` : '',
     coordinateLabel: position(p),
     syncLabel: elder.applied_version === elder.version ? '设备已确认当前设置' : '设置等待老人端同步',
@@ -55,8 +62,8 @@ function mapData(elder) {
 function point(lat, lon, radius, max) {
   if ([lat,lon,radius].some(value => String(value).trim() === '')) throw new Error('请填写经纬度和半径');
   const a=Number(lat),b=Number(lon),c=Number(radius);
-  if (!Number.isFinite(a)||a < -90||a > 90||!Number.isFinite(b)||b < -180||b > 180||!Number.isFinite(c)||c < 100||c > max) {
-    throw new Error(`经纬度无效；半径应为 100–${max} 米`);
+  if (!Number.isFinite(a)||a < -90||a > 90||!Number.isFinite(b)||b < -180||b > 180||!Number.isFinite(c)||!Number.isInteger(c)||c < 1||c > max) {
+    throw new Error(`经纬度无效；半径应为 1–${max} 米的整数`);
   }
   return { lat:a,lon:b,radius:c };
 }

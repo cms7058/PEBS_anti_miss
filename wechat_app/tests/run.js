@@ -47,6 +47,18 @@ async function main(){
  settings.data.form.lat='31.2304';settings.data.form.lon='121.4737';settings.data.form.radius='500';await settings.save();
  assert.equal(settings.data.error,'');elder=await api.request(api.elderPath(eid));assert.equal(elder.version,1);
  assert.equal(elder.settings.fence.radius,500);
+ // Meter input is validated locally and accepted by the real settings API.
+ for(const radius of ['1','37']) {
+  const current=await api.request(api.elderPath(eid));
+  const body=model.buildSettings(current,{lat:'31.2304',lon:'121.4737',radius},'fence');
+  await api.request(api.elderPath(eid,'/settings'),'PUT',body);
+  assert.equal((await api.request(api.elderPath(eid))).settings.fence.radius,Number(radius));
+ }
+ for(const radius of ['0','-1','1.5','10001']) assert.throws(()=>model.point('31','121',radius,10000));
+ // Restore the fixture value expected below while preserving the actual concurrent-edit test.
+ elder=await api.request(api.elderPath(eid));
+ await api.request(api.elderPath(eid,'/settings'),'PUT',model.buildSettings(elder,{lat:'31.2304',lon:'121.4737',radius:'500'},'fence'));
+ elder=await api.request(api.elderPath(eid));
  // Another family member/device changes settings while an edit form is open. Input must survive 409.
  settings.data.form.radius='700';await settings.save();assert.equal(settings.data.conflict,true);
  assert.equal(settings.data.form.radius,'700');assert.match(settings.data.error,/其他家属/);

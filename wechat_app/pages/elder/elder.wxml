@@ -1,29 +1,41 @@
-<view class="page">
+<view class="page elder-dashboard">
  <view class="error" wx:if="{{error}}">{{error}}</view>
  <view wx:if="{{elder}}">
   <view class="row"><view class="title">{{elder.name}}</view><text class="tag">{{elder.is_owner ? '主管理员' : elder.can_edit ? '可修改设置' : '查看权限'}}</text></view>
   <view class="muted">{{elder.paired ? '老人设备已绑定' : '尚未绑定老人设备'}} · {{elder.syncLabel}}</view>
-  <view class="card">
-   <view class="heading">最近上报位置</view><view class="{{elder.stale ? 'warning' : 'muted'}}">{{elder.lastLabel}}</view><view>{{elder.accuracyLabel}}</view>
-   <map wx:if="{{hasMap}}" class="map" latitude="{{mapCenter.lat}}" longitude="{{mapCenter.lon}}" markers="{{markers}}" circles="{{circles}}" scale="14"/>
-   <view class="muted selectable">{{elder.coordinateLabel}}</view><view class="muted">页面刷新：{{lastRefresh}}。平时不定时刷新，点击按钮读取最新快照。</view><button bindtap="refresh" disabled="{{busy}}">刷新后台数据</button>
-   <button bindtap="locate" disabled="{{busy || !elder.canRequestPosition || elder.requestWaiting}}">{{elder.requestTitle}}</button>
-   <view class="muted">{{elder.requestLabel}}</view>
-   <view class="muted">{{elder.pushLabel}}</view>
-   <view class="muted">{{elder.modeLabel}}</view>
-   <view class="muted">请求老人手机重新定位。需新版老人端开启守护，锁屏休眠可能延迟；刷新后台数据只读取已上报位置。</view>
+  <view class="card location-card">
+   <view class="map-frame"><map wx:if="{{hasMap}}" class="map" latitude="{{mapCenter.lat}}" longitude="{{mapCenter.lon}}" markers="{{markers}}" circles="{{circles}}" scale="14"/><view wx:else class="empty-map">等待首次定位</view><view class="map-badge">◎ {{elder.modeTitle}}</view></view>
+   <view class="location-content">
+    <view class="metrics"><view><view class="metric-caption">手机电量</view><view class="metric-value">{{elder.batteryValue}}</view></view><view><view class="metric-caption">定位误差</view><view class="metric-value">{{elder.accuracyValue}}</view></view><view><view class="metric-caption">位置状态</view><view class="metric-value {{elder.stale ? 'warning' : ''}}">{{elder.stale ? '历史位置' : '已上报'}}</view></view></view>
+    <view class="muted">{{elder.lastLabel}}</view>
+    <button class="primary locate-action" bindtap="locate" loading="{{elder.requestWaiting}}" disabled="{{busy || !elder.canRequestPosition || elder.requestWaiting}}">{{elder.requestWaiting ? '正在获取新位置…' : elder.requestTitle}}</button>
+    <view wx:if="{{elder.requestLabel}}" class="muted">{{elder.requestLabel}}</view>
+    <view class="map-actions"><button bindtap="refresh" disabled="{{busy}}">↻ 刷新记录</button><button wx:if="{{elder.location}}" bindtap="openMap">打开地图 ↗</button></view>
+    <view class="muted small-note">记录读取于 {{lastRefresh}} · 位置与电量为上次采集值</view>
+   </view>
   </view>
-  <view class="card" wx:if="{{elder.is_owner}}"><view class="heading">绑定老人端</view><button bindtap="pair" disabled="{{busy}}">{{elder.paired ? '重新绑定老人手机' : '生成新的绑定码'}}</button><view class="code selectable">{{code}}</view><view wx:if="{{code}}" class="muted">有效期至 {{expires}}</view><button wx:if="{{code}}" bindtap="copy">复制绑定码</button></view>
-  <view class="card"><view class="heading">守护设置</view>
-   <view>{{elder.settings.fence ? '已启用日常围栏' : '尚未设置日常围栏'}}</view>
-   <view wx:if="{{elder.settings.trip}}">目的地：{{elder.settings.trip.name}} · {{elder.settings.trip.status === 'arrived' ? '已到达，等待结束行程' : '行程进行中'}}</view>
-   <view class="muted">越界持续 {{elder.settings.outside_delay}} 秒提醒；自动守护期间位置 {{elder.settings.offline_after}} 秒未更新提醒。行程期间暂停日常围栏。</view>
-   <view wx:if="{{elder.settingsPushFailed}}" class="error">规则变更推送失败，请打开老人端同步规则</view>
-   <view wx:if="{{elder.can_edit}}"><button data-mode="fence" bindtap="settings">设置电子围栏</button><button data-mode="trip" bindtap="settings">指定目的地与到达时间</button><button data-mode="threshold" bindtap="settings">调整提醒时间</button><button wx:if="{{elder.settings.trip}}" bindtap="endTrip" disabled="{{busy}}">结束本次行程</button></view>
-   <button wx:if="{{elder.is_owner}}" bindtap="members">管理授权家属</button>
+  <view class="heading">守护设置</view>
+  <view class="card guard-card">
+   <view class="rule-grid">
+    <button class="rule-tile fence-tile" data-mode="fence" bindtap="settings" disabled="{{!elder.can_edit || busy}}"><view class="rule-icon">◎</view><view class="metric-caption">电子围栏</view><view class="rule-value">{{elder.fenceRadius}}</view><view class="metric-caption">{{elder.tripActive ? '行程期间暂停' : '安全活动半径'}}{{elder.can_edit ? ' · 编辑' : ''}}</view></button>
+    <button class="rule-tile trip-tile" data-mode="trip" bindtap="settings" disabled="{{!elder.can_edit || busy}}"><view class="rule-icon">⚑</view><view class="metric-caption">本次目的地</view><view class="rule-value">{{elder.settings.trip ? elder.settings.trip.name : '未指定'}}</view><view class="metric-caption">{{elder.settings.trip ? '到达半径 ' + elder.tripRadius : '指定地点与到达时间'}}{{elder.can_edit ? ' · 编辑' : ''}}</view></button>
+   </view>
+   <view wx:if="{{elder.fence_status && elder.settings.fence}}" class="muted">{{elder.fence_status.message}}</view>
+   <view wx:if="{{elder.settings.trip}}" class="muted">{{elder.settings.trip.status === 'arrived' ? '已到达，结束行程后恢复围栏' : '行程期间允许离开围栏'}}</view>
+   <view wx:if="{{elder.smallRadius}}" class="notice">半径小于最近定位误差，可能暂时无法判定。</view>
+   <view wx:if="{{elder.settingsPushFailed}}" class="error">设置推送失败，请打开老人端同步</view>
+   <view class="map-actions"><button wx:if="{{elder.can_edit && elder.tripActive}}" bindtap="endTrip" disabled="{{busy}}">结束行程</button><button bindtap="toggleDetails">{{showDetails ? '收起详情 ▴' : '更多设置与连接详情 ▾'}}</button></view>
+   <view wx:if="{{showDetails}}" class="details-panel">
+    <view class="muted">{{elder.syncLabel}} · {{elder.modeLabel}}</view><view class="muted">{{elder.pushLabel}}</view><view class="muted selectable">{{elder.coordinateLabel}}</view>
+    <view class="muted">获取新位置会请求手机采集；刷新记录只读取服务端已有数据。</view>
+    <view class="muted">持续越界 {{elder.settings.outside_delay}} 秒提醒；自动守护位置 {{elder.settings.offline_after}} 秒未更新提醒。</view>
+    <button wx:if="{{elder.can_edit}}" data-mode="threshold" bindtap="settings">提醒规则</button>
+    <button wx:if="{{elder.is_owner}}" bindtap="members">管理授权家属</button>
+    <button wx:if="{{elder.is_owner}}" bindtap="pair" disabled="{{busy}}">{{elder.paired ? '重新绑定老人手机' : '获取老人手机绑定码'}}</button>
+    <view wx:if="{{code}}"><view class="code selectable">{{code}}</view><view class="muted">有效期至 {{expires}}</view><button bindtap="copy">复制绑定码</button></view>
+   </view>
   </view>
   <view class="error" wx:if="{{alertError}}">{{alertError}}</view>
-  <view class="muted" wx:if="{{elder.fence_status}}">{{elder.fence_status.message}}</view>
   <view class="heading">异常记录</view><view class="muted" wx:if="{{!elder.events.length}}">暂无异常记录</view>
   <view class="card" wx:for="{{elder.events}}" wx:key="id"><view class="row"><text class="heading">{{item.message}}</text><text class="tag">{{item.active ? '异常仍在持续' : '已恢复'}}</text></view><view class="muted">{{item.timeLabel}}</view><view class="selectable">{{item.locationLabel}}</view><view wx:if="{{item.handler}}">已由 {{item.handler}} 接手</view><button wx:if="{{item.location}}" data-id="{{item.id}}" bindtap="eventMap">查看事件位置</button><button wx:if="{{item.active && !item.handler}}" data-id="{{item.id}}" bindtap="ack" disabled="{{busy}}">我来接手</button><button wx:if="{{elder.can_edit}}" data-id="{{item.id}}" bindtap="deleteEvent" disabled="{{busy}}">删除此提醒</button></view>
  </view>

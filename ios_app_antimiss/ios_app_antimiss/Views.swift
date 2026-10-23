@@ -166,61 +166,15 @@ struct ElderView: View {
         Group {
             if let elder {
                 List {
-                    Section { DataSyncStatusView() }
                     Section {
-                        Map(position: $camera) {
-                            if let location = elder.location { Marker(elder.name, systemImage: "person.fill", coordinate: location.coordinate).tint(.teal) }
-                            if let fence = elder.settings.fence { MapCircle(center: fence.coordinate, radius: fence.radius).foregroundStyle(.teal.opacity(0.13)).stroke(.teal, lineWidth: 2) }
-                            if let trip = elder.settings.trip, ["active", "arrived"].contains(trip.status) { Marker(trip.name, systemImage: "flag.fill", coordinate: trip.coordinate).tint(.orange) }
-                        }.frame(height: 270).clipShape(RoundedRectangle(cornerRadius: 18))
-                        if let loc = elder.location {
-                            Text("定位于 \(timeLabel(loc.recorded_at)) · 精度约 \(Int(loc.accuracy)) 米").font(.caption).foregroundStyle(Date().timeIntervalSince1970 - loc.recorded_at > elder.settings.offline_after ? .orange : .secondary)
-                            if Date().timeIntervalSince1970 - loc.recorded_at > elder.settings.offline_after {
-                                Label("此为历史位置，老人端尚未上报新位置", systemImage: "clock.badge.exclamationmark")
-                                    .font(.caption).foregroundStyle(.orange)
-                            }
-                            Text("电量 \(Int(loc.battery))% · \(loc.lat.formatted(.number.precision(.fractionLength(5)))), \(loc.lon.formatted(.number.precision(.fractionLength(5))))").font(.caption)
-                            Button("在地图中查看此位置") { MKMapItem(placemark: MKPlacemark(coordinate: loc.coordinate)).openInMaps() }
-                        } else { Text(elder.paired ? "等待老人手机上传位置" : "等待老人手机绑定") }
-                        Text(elder.settings.automatic ? "围栏／行程自动守护中：老人手机继续上报，本页点击刷新后更新" : "按需查询模式：本页显示上次位置，点击获取才请求采集")
-                            .font(.caption).foregroundStyle(.secondary)
-                        RemoteLocationView(elder: elder)
-                        if elder.version != elder.applied_version { Label("设置已保存，等待老人手机同步", systemImage: "arrow.triangle.2.circlepath").foregroundStyle(.orange) }
-                    }
+                        LocationDashboard(elder: elder, camera: $camera)
+                    }.listRowInsets(EdgeInsets()).listRowBackground(Color.clear).listRowSeparator(.hidden)
                     Section("守护设置") {
-                        Text(elder.settings.automatic ? "自动守护：围栏或进行中的行程需要定时定位" : "按需查询：不自动定位；点击获取最新位置时请求采集")
-                            .font(.caption).foregroundStyle(.secondary)
-                        if elder.elder_push?.settings_delivery?.state == "failed" {
-                            Text("规则变更推送失败，请打开老人端同步规则").foregroundStyle(.orange)
-                        }
-                        LabeledContent("电子围栏", value: elder.settings.fence.map { "半径 \(Int($0.radius)) 米" } ?? "未设置")
-                        if let status = elder.fence_status {
-                            Text(status.message).font(.caption).foregroundStyle(status.state == "inside" ? Color.secondary : Color.orange)
-                        }
-                        if let trip = elder.settings.trip {
-                            LabeledContent("目的地", value: trip.name)
-                            Text(trip.status == "active" ? "预计 \(timeLabel(trip.deadline)) 前到达；本次行程允许离开日常围栏" : trip.status == "arrived" ? "已确认到达；家属结束行程后恢复日常围栏监测" : "行程已结束")
-                        }
-                        if elder.can_edit {
-                            Button("设置电子围栏") { edit = "fence" }
-                            Button("指定本次目的地") { edit = "trip" }
-                            if let trip = elder.settings.trip, ["active", "arrived"].contains(trip.status) {
-                                Button("结束本次行程") { Task { await model.perform { var s = elder.settings; s.trip = nil; try await model.save(elder: elder, settings: s) } } }
-                            }
-                            if elder.settings.fence != nil {
-                                Button("关闭电子围栏", role: .destructive) { Task { await model.perform { var s = elder.settings; s.fence = nil; try await model.save(elder: elder, settings: s) } } }
-                            }
-                            NavigationLink("提醒规则") { RulesView(elder: elder) }
-                        }
-                        if elder.is_owner {
-                            Button("管理授权人员") { members = true }
-                            Button(elder.paired ? "重新绑定老人手机" : "获取老人手机绑定码") {
-                                if elder.paired { confirmRebind = true }
-                                else { generatePairCode(replace: false) }
-                            }.disabled(model.busy)
-                        }
-                    }
+                        GuardDashboard(elder: elder, edit: { edit = $0 }, members: { members = true },
+                            pair: { if elder.paired { confirmRebind = true } else { generatePairCode(replace: false) } })
+                    }.listRowInsets(EdgeInsets()).listRowBackground(Color.clear).listRowSeparator(.hidden)
                     Section("异常提醒") {
+                        if let failure = model.alertsFailure { Label("提醒同步失败：\(failure)", systemImage: "exclamationmark.circle").font(.caption).foregroundStyle(.orange) }
                         if !model.pushConfigured {
                             Text("苹果远程通知未配置：App打开时会检查异常；退出或锁屏后不能依靠此方式收提醒。")
                                 .font(.caption).foregroundStyle(.orange)
@@ -296,7 +250,10 @@ struct PlaceEditor: View {
     @State private var query = ""
     @State private var results: [SearchPlace] = []
     @State private var selected: SearchPlace?
-    @State private var radius: Double = 500
+    @State private var radiusText = "500"
+    @State private var initialized = false
+    private var maximumRadius: Int { mode == "fence" ? 10000 : 2000 }
+    private var validRadius: Int? { guard let value = Int(radiusText), (1...maximumRadius).contains(value) else { return nil }; return value }
     @State private var deadline = Date().addingTimeInterval(3600)
     @State private var searching = false
     var body: some View {
@@ -313,17 +270,32 @@ struct PlaceEditor: View {
                     if let selected { Label(selected.name, systemImage: "checkmark.circle.fill").foregroundStyle(.teal) }
                 }
                 Section(mode == "fence" ? "安全范围" : "到达判定") {
-                    Slider(value: $radius, in: 100...(mode == "fence" ? 5000 : 1000), step: 50)
-                    Text("半径 \(Int(radius)) 米")
+                    RadiusEditor(text: $radiusText, maximum: maximumRadius)
+                    if let accuracy = elder.location?.accuracy, let value = validRadius, Double(value) < accuracy {
+                        Label("半径小于最近定位误差（约 \(Int(accuracy)) 米），可能无法确认到达或越界。", systemImage: "location.slash")
+                            .font(.caption).foregroundStyle(.orange)
+                    }
+                    Text("按 1 米设置范围，不代表手机能定位到 1 米。判定仍保留定位误差过滤。")
+                        .font(.caption).foregroundStyle(.secondary)
                     if mode == "trip" { DatePicker("预计到达时间", selection: $deadline, in: Date().addingTimeInterval(120)...Date().addingTimeInterval(6 * 86400)) }
                 }
                 Section {
-                    Button("保存") { Task { await model.perform { try await save(); dismiss() } } }.disabled(selected == nil || model.busy)
+                    Button("保存") { Task { await model.perform { try await save(); dismiss() } } }.disabled(selected == nil || validRadius == nil || model.busy)
                     Text(mode == "fence" ? "持续越界且定位精度满足条件时提醒家属。" : "本次行程允许离开日常围栏；超时仍未确认到达时提醒家属。")
                         .font(.footnote).foregroundStyle(.secondary)
                 }
             }.navigationTitle(mode == "fence" ? "设置围栏" : "指定目的地").toolbar { Button("取消") { dismiss() } }
-                .onAppear { radius = mode == "fence" ? elder.settings.fence?.radius ?? 500 : 200 }
+                .onAppear {
+                    guard !initialized else { return }; initialized = true
+                    if mode == "fence", let fence = elder.settings.fence {
+                        radiusText = String(Int(fence.radius))
+                        selected = SearchPlace(name: "现有围栏中心", coordinate: .init(latitude: fence.lat, longitude: fence.lon))
+                    } else if mode == "trip", let trip = elder.settings.trip {
+                        radiusText = String(Int(trip.radius))
+                        selected = SearchPlace(name: trip.name, coordinate: .init(latitude: trip.lat, longitude: trip.lon))
+                        deadline = max(Date().addingTimeInterval(180), Date(timeIntervalSince1970: trip.deadline))
+                    } else { radiusText = mode == "fence" ? "500" : "200" }
+                }
         }
     }
     func search() async {
@@ -341,7 +313,8 @@ struct PlaceEditor: View {
         } catch { model.error = error.localizedDescription }
     }
     func save() async throws {
-        guard let selected else { return }
+        guard let selected, let value = validRadius else { return }
+        let radius = Double(value)
         var settings = elder.settings
         if mode == "fence" { settings.fence = Point(lat: selected.coordinate.latitude, lon: selected.coordinate.longitude, radius: radius) }
         else { settings.trip = Trip(name: selected.name, lat: selected.coordinate.latitude, lon: selected.coordinate.longitude, radius: radius, deadline: deadline.timeIntervalSince1970) }
@@ -428,25 +401,31 @@ struct RemoteLocationView: View {
     let elder: Elder
     @State private var requestedID: String?
     var body: some View {
-        Button(elder.positionRequestTitle) {
+        Button {
             Task { await model.perform {
                 let result: LocationRequest = try await model.request("/elders/\(elder.id)/location-request", method: "POST", body: [:])
                 try await model.refresh()
                 requestedID = result.id
             } }
-        }.disabled(model.busy || !elder.canRequestPosition || elder.location_request?.waiting == true)
+        } label: {
+            HStack {
+                if elder.location_request?.waiting == true { ProgressView().tint(.white) }
+                else { Image(systemName: "location.fill") }
+                Text(elder.location_request?.waiting == true ? "正在获取新位置…" : elder.positionRequestTitle).fontWeight(.semibold)
+            }.frame(maxWidth: .infinity).padding(.vertical, 8)
+        }.buttonStyle(.borderedProminent).controlSize(.large)
+            .disabled(model.busy || !elder.canRequestPosition || elder.location_request?.waiting == true)
         if let label = elder.positionRequestLabel {
-            Text(label).font(.caption).foregroundStyle(.secondary)
+            Label(label, systemImage: elder.location_request?.waiting == true ? "clock" : elder.location_request?.state == "completed" ? "checkmark.circle" : "exclamationmark.circle")
+                .font(.caption).foregroundStyle(elder.location_request?.state == "expired" ? Color.orange : Color.secondary)
         }
-        if let status = elder.pushDescription {
-            Text(status).font(.caption).foregroundStyle(.orange)
-        }
-        if let diag = elder.device_diagnostics {
-            Text("老人端版本 \(diag.app_version) · 状态上报于 \(timeLabel(diag.updated_at))")
-                .font(.caption).foregroundStyle(.secondary)
-        }
-        Text("主动查询期间会等待返回结果；平时请点刷新读取服务器快照。老人端需开启守护，无规则时不自动定位。")
-            .font(.caption).foregroundStyle(.secondary)
+        DisclosureGroup("连接与定位说明") {
+            VStack(alignment: .leading, spacing: 8) {
+                if let status = elder.pushDescription { Text(status) }
+                if let diag = elder.device_diagnostics { Text("老人端 \(diag.app_version) · 状态上报于 \(timeLabel(diag.updated_at))") }
+                Text("获取新位置会请求老人手机采集；刷新记录只读取服务端已有数据。")
+            }.font(.caption).foregroundStyle(.secondary).padding(.top, 6)
+        }.font(.caption).tint(.secondary)
             .task(id: requestedID) {
                 guard let id = requestedID else { return }
                 // Bounded polling only for the query explicitly started in this view.

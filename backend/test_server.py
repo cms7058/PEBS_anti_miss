@@ -300,6 +300,28 @@ class SafetyFlowTests(unittest.TestCase):
         self.now += 61; self.upload(lat=31.02)
         self.assertFalse(self.active("outside"))
 
+    def test_meter_radius_roundtrips_and_invalid_bounds_are_rejected(self):
+        for radius in (1, 37, 10000):
+            self.settings(fence={"lat":31,"lon":121,"radius":radius})
+            self.assertEqual(self.elder()["settings"]["fence"]["radius"], radius)
+        for radius in (1, 37, 2000):
+            self.settings(trip={"name":"公园","lat":31,"lon":121,"radius":radius,"deadline":self.now+600,"status":"active"})
+            self.assertEqual(self.elder()["settings"]["trip"]["radius"], radius)
+        for radius in (0, -1, 10001):
+            with self.assertRaises(APIError): self.settings(fence={"lat":31,"lon":121,"radius":radius})
+        for radius in (0, -1, 2001):
+            with self.assertRaises(APIError): self.settings(trip={"name":"公园","lat":31,"lon":121,"radius":radius,"deadline":self.now+600,"status":"active"})
+
+    def test_small_destination_retains_accuracy_margin_and_trip_exemption(self):
+        self.settings(fence={"lat":30,"lon":120,"radius":1}, trip={"name":"公园","lat":31,"lon":121,"radius":1,"deadline":self.now+600,"status":"active"})
+        self.upload(accuracy=10)
+        self.assertEqual(self.elder()["settings"]["trip"]["status"], "active")
+        self.assertFalse(self.active("outside"))
+        self.now += 61
+        self.upload(accuracy=0.5)
+        self.assertEqual(self.elder()["settings"]["trip"]["status"], "arrived")
+        self.assertFalse(self.active("outside"))
+
     def test_moving_fence_samples_within_three_minutes_still_confirm_dwell(self):
         self.settings(fence={"lat":31,"lon":121,"radius":500})
         self.upload(lat=31.02)

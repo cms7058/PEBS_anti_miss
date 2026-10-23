@@ -1,6 +1,6 @@
 const api=require('../../utils/api'),ui=require('../../utils/ui'),model=require('../../utils/model');
 Page({
- data:{ elder:null,busy:false,error:'',code:'',expires:'',markers:[],circles:[],hasMap:false,mapCenter:null,lastRefresh:'',alertError:'' },
+ data:{ elder:null,busy:false,error:'',code:'',expires:'',markers:[],circles:[],hasMap:false,mapCenter:null,lastRefresh:'',alertError:'',showDetails:false },
  onLoad(query){this.id=query.id;this.visible=false;this.sequence=0;},
  onShow(){if(!ui.requireLogin())return;this.visible=true;this.refresh();this.alertTimer=setInterval(()=>{
    if(!this.data.busy)this.loadAlerts().catch(error=>{if(this.visible)this.setData({alertError:error.message||'提醒同步失败'});});
@@ -31,6 +31,12 @@ Page({
      try{if(this.visible)await this.load();}catch(error){if(this.visible)this.setData({error:error.message||'刷新失败，请重试'});}
      this.waitForQuery(id,remaining-1);
    },5000);
+ },
+ toggleDetails(){this.setData({showDetails:!this.data.showDetails});},
+ openMap(){
+   const location=this.data.elder&&this.data.elder.location;if(!location)return;
+   const point=require('../../utils/coordinates').display(location.lat,location.lon);
+   wx.openLocation({latitude:point.lat,longitude:point.lon,name:this.data.elder.name,address:`采集于 ${model.time(location.recorded_at)}`,fail:()=>this.setData({error:'地图未能打开'})});
  },
  pair(){return ui.run(this,async()=>{
    const replace=!!this.data.elder.paired;
