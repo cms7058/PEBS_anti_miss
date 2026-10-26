@@ -94,6 +94,8 @@ def diagnose(database, code_root, now=None, live_push=False):
                 "settings_applied": elder["version"] == elder["applied_version"],
                 "last_upload_age_seconds": age(elder["last_seen"], now),
                 "last_capture_age_seconds": age(location.get("recorded_at"), now) if location else None,
+                "location_provider": location.get("provider", "unknown") if location else None,
+                "location_accuracy_metres": location.get("accuracy") if location else None,
                 "request": None,
                 "location_hint": None,
             }

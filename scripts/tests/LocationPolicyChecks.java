@@ -3,11 +3,15 @@ import cn.familyguard.elder.LocationPolicy;
 public final class LocationPolicyChecks {
     private static void check(boolean value, String message) { if (!value) throw new AssertionError(message); }
     public static void main(String[] args) {
-        check(LocationPolicy.readyToUpload(30, true, 0), "precise fresh sample uploads immediately");
-        check(!LocationPolicy.readyToUpload(500, true, 1499), "allow a short window for improved accuracy");
-        check(LocationPolicy.readyToUpload(500, true, 1500), "requested coarse fix must not wait 90 seconds");
-        check(!LocationPolicy.readyToUpload(500, false, 1500), "quick query must not relax automatic guard accuracy");
-        check(!LocationPolicy.readyToUpload(10001, true, 1500), "do not queue an accuracy rejected by server");
+        check(!LocationPolicy.readyToUpload(30, true, 0, false, true), "precise-looking network estimate must not cancel GPS");
+        check(!LocationPolicy.readyToUpload(30, false, 9999, false, true), "automatic guard also allows GPS to arrive");
+        check(LocationPolicy.readyToUpload(30, true, 0, true, true), "usable fresh GPS answers immediately");
+        check(LocationPolicy.readyToUpload(30, true, 0, false, false), "GPS disabled: do not unnecessarily delay usable network fix");
+        check(!LocationPolicy.readyToUpload(500, true, 9999, false, true), "coarse estimate waits for GPS grace");
+        check(LocationPolicy.readyToUpload(500, true, 10000, false, true), "indoor query falls back after bounded grace");
+        check(LocationPolicy.readyToUpload(30, false, 10000, false, true), "precise network fallback remains available for automatic guard");
+        check(!LocationPolicy.readyToUpload(500, false, 10000, false, true), "query fallback does not relax automatic guard accuracy");
+        check(!LocationPolicy.readyToUpload(10001, true, 10000, true, true), "reject accuracy beyond server limit");
         long now = 1800000000000L;
         check(LocationPolicy.fresh(5100, 5200, 5000, now, now, now - 1000, 30), "fresh moving fix must be accepted");
         check(LocationPolicy.fresh(5100, 5200, 5000, now + 5000, now, now - 1000, 30), "small GPS/wall-clock skew must not discard the capture");

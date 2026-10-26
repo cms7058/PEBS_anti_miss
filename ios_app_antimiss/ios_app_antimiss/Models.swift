@@ -30,6 +30,14 @@ struct Position: Codable {
     let accuracy: Double
     let recorded_at: Double
     let battery: Double
+    var provider: String? = nil
+    var sourceLabel: String {
+        switch provider {
+        case "gps": return "GPS 卫星定位"
+        case "network": return "网络辅助定位（估算位置）"
+        default: return "定位来源未上报"
+        }
+    }
     var coordinate: CLLocationCoordinate2D { let p = Coordinates.display(lat: lat, lon: lon); return .init(latitude: p.lat, longitude: p.lon) }
     var rawCoordinate: CLLocationCoordinate2D { .init(latitude: lat, longitude: lon) }
 }

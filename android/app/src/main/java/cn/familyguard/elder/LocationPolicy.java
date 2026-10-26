@@ -29,9 +29,14 @@ public final class LocationPolicy {
     public static boolean prefer(float accuracy, long elapsed, float bestAccuracy, long bestElapsed, boolean moving) {
         return (moving && elapsed - bestElapsed >= 10000) || accuracy < bestAccuracy;
     }
-    public static boolean readyToUpload(float accuracy, boolean requested, long captureAge) {
-        return Float.isFinite(accuracy) && accuracy > 0 && accuracy <= 10000 &&
-            (accuracy <= 100 || (requested && captureAge >= 1500));
+    public static final long GPS_GRACE_MS = 10000L;
+    public static boolean readyToUpload(float accuracy, boolean requested, long captureAge,
+                                         boolean gpsSample, boolean gpsAvailable) {
+        if (!Float.isFinite(accuracy) || accuracy <= 0 || accuracy > 10000) return false;
+        // A network estimate can report small uncertainty yet repeat a tower/Wi-Fi position.
+        // Do not cancel a working GPS acquisition just because that estimate arrived first.
+        if (!gpsSample && gpsAvailable && captureAge < GPS_GRACE_MS) return false;
+        return accuracy <= 100 || (requested && captureAge >= GPS_GRACE_MS);
     }
     public static long retryDelay(int failures) {
         switch (failures) { case 1: return 5000; case 2: return 15000; case 3: return 30000; default: return -1; }

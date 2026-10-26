@@ -8,6 +8,7 @@
    <view class="location-content">
     <view class="metrics"><view><view class="metric-caption">手机电量</view><view class="metric-value">{{elder.batteryValue}}</view></view><view><view class="metric-caption">定位误差</view><view class="metric-value">{{elder.accuracyValue}}</view></view><view><view class="metric-caption">位置状态</view><view class="metric-value {{elder.stale ? 'warning' : ''}}">{{elder.stale ? '历史位置' : '已上报'}}</view></view></view>
     <view class="muted">{{elder.lastLabel}}</view>
+    <view class="muted">{{elder.sourceLabel}}</view>
     <view wx:if="{{elder.location}}" class="muted selectable">{{elder.coordinateLabel}}</view>
     <button class="primary locate-action" bindtap="locate" loading="{{queryWaiting}}" disabled="{{busy || (!elder.canRequestPosition && !elder.requestWaiting) || queryTracking}}">{{queryWaiting ? '正在请求新位置…' : queryTracking ? '正在跟进手机响应…' : elder.requestWaiting ? '继续查询结果' : elder.requestTitle}}</button>
     <view wx:if="{{elder.requestLabel && !queryError}}" class="muted">{{elder.requestLabel}}</view>

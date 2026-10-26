@@ -91,6 +91,7 @@ class TrackingService : Service(), LocationListener {
     private var requestSampling = false
     private var uploading = false
     private var bestLocation: Location? = null
+    private var gpsListening = false
     private var fixStartedElapsed = 0L
     private var nextFix = 0L
     private var request: JSONObject? = null
@@ -99,10 +100,9 @@ class TrackingService : Service(), LocationListener {
     private var requestAttempts = 0
     private var settings = JSONObject()
     private val quickRequestedFix = Runnable {
-        // Prefer a quick, honestly labelled coarse fix over waiting 90s for GPS accuracy.
-        // It is still a new sample from this capture, never a last-known location.
-        if (active() && locating && !uploading && hasPendingRequest()) bestLocation?.let {
-            if (LocationPolicy.readyToUpload(it.accuracy, true, SystemClock.elapsedRealtime() - fixStartedElapsed)) uploadLocation(it)
+        // Bounded GPS grace; indoors a fresh network estimate remains an honest fallback.
+        if (active() && locating && !uploading) bestLocation?.let {
+            if (readyToUpload(it)) uploadLocation(it)
         }
     }
     private val fixTimeout: Runnable = object : Runnable {
@@ -314,11 +314,13 @@ class TrackingService : Service(), LocationListener {
         }
         keepWorking()
         var listening = false
+        gpsListening = false
         for (provider in listOf(LocationManager.NETWORK_PROVIDER, LocationManager.GPS_PROVIDER)) {
             try {
                 if (manager.allProviders.contains(provider) && manager.isProviderEnabled(provider)) {
                     manager.requestLocationUpdates(provider, if (automaticSampling && !requestSampling) interval() else 1000L, 0f, this, Looper.getMainLooper())
                     listening = true
+                    if (provider == LocationManager.GPS_PROVIDER) gpsListening = true
                 }
             } catch (_: Exception) { }
         }
@@ -328,13 +330,14 @@ class TrackingService : Service(), LocationListener {
         update(if (request != null) "已收到家属请求，正在获取新位置…" else "正在进行定时定位…")
         val window = if (requestSampling) LocationPolicy.fixWindow(request!!.optDouble("expires"), System.currentTimeMillis()/1000.0) else 90000L
         handler.postDelayed(fixTimeout, window)
-        if (requestSampling) handler.postDelayed(quickRequestedFix, 1500)
+        handler.postDelayed(quickRequestedFix, LocationPolicy.GPS_GRACE_MS)
     }
     private fun stopFix() {
         locating = false
         automaticSampling = false
         requestSampling = false
         manager.removeUpdates(this)
+        gpsListening = false
         handler.removeCallbacks(fixTimeout)
         handler.removeCallbacks(quickRequestedFix)
         releaseIfIdle()
@@ -347,9 +350,14 @@ class TrackingService : Service(), LocationListener {
         val best = bestLocation
         val moving = location.hasSpeed() && location.speed > 0.7f
         if (best == null || LocationPolicy.prefer(location.accuracy, elapsed, best.accuracy, best.elapsedRealtimeNanos / 1000000, moving)) bestLocation = Location(location)
-        // Give GPS time to improve a coarse network fix before accepting it.
-        if (LocationPolicy.readyToUpload(location.accuracy, hasPendingRequest(), SystemClock.elapsedRealtime() - fixStartedElapsed)) uploadLocation(location)
+        // A usable GPS fix wins immediately; otherwise upload the best candidate, not
+        // whichever (possibly worse) provider callback happened to cross the deadline.
+        val candidate = if (location.provider == LocationManager.GPS_PROVIDER && location.accuracy <= 100) location else bestLocation
+        if (candidate != null && readyToUpload(candidate)) uploadLocation(candidate)
     }
+    private fun readyToUpload(location: Location): Boolean = LocationPolicy.readyToUpload(
+        location.accuracy, hasPendingRequest(), SystemClock.elapsedRealtime() - fixStartedElapsed,
+        location.provider == LocationManager.GPS_PROVIDER, gpsListening)
     private fun uploadLocation(location: Location) {
         if (!active()) return
         handler.removeCallbacks(quickRequestedFix)
@@ -357,6 +365,8 @@ class TrackingService : Service(), LocationListener {
             // Keep OS location subscriptions while rules need monitoring. Handler timers alone
             // cannot reliably wake a sleeping CPU; provider callbacks drive subsequent samples.
             bestLocation = null
+            fixStartedElapsed = SystemClock.elapsedRealtime()
+            handler.postDelayed(quickRequestedFix, LocationPolicy.GPS_GRACE_MS)
             handler.removeCallbacks(fixTimeout)
             handler.postDelayed(fixTimeout, 90000)
         } else stopFix()
@@ -366,6 +376,7 @@ class TrackingService : Service(), LocationListener {
         val payload = JSONObject().put("lat", location.latitude).put("lon", location.longitude)
             .put("accuracy", location.accuracy.toDouble()).put("recorded_at", location.time / 1000.0)
             .put("battery", battery).put("applied_version", prefs.getInt("settings_version", 0))
+            .put("provider", if (location.provider == LocationManager.GPS_PROVIDER) "gps" else "network")
         if (remote != null) payload.put("request_id", remote.getString("id")).put("request_expires", remote.getDouble("expires"))
         val previous = pendingUpload
         if (previous == null || payload.getDouble("recorded_at") > previous.getDouble("recorded_at")) {

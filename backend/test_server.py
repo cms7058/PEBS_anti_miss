@@ -50,6 +50,26 @@ class SafetyFlowTests(unittest.TestCase):
     def request_location(self):
         return self.call("POST", f"/elders/{self.eid}/location-request")
 
+    def test_location_provider_roundtrip_and_legacy_uploads(self):
+        self.upload()
+        self.assertNotIn("provider", self.elder()["location"])
+        for provider in ("network", "gps"):
+            self.now += 10
+            request = self.request_location()
+            payload = {"lat": 31, "lon": 121, "accuracy": 30, "recorded_at": self.now,
+                       "battery": 70, "applied_version": 0, "provider": provider,
+                       "request_id": request["id"]}
+            self.call("POST", "/device/location", payload, self.device)
+            self.assertEqual(self.elder()["location"]["provider"], provider)
+            self.assertEqual(self.elder()["location_request"]["state"], "completed")
+            self.now += 31
+        payload["recorded_at"] = self.now
+        payload["provider"] = "unknown-source"
+        payload.pop("request_id")
+        with self.assertRaises(APIError):
+            self.call("POST", "/device/location", payload, self.device)
+        self.assertEqual(self.elder()["location"]["provider"], "gps")
+
     def test_remote_location_requires_new_correlated_capture(self):
         self.upload()
         self.now += 10

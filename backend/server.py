@@ -420,6 +420,9 @@ class Store:
                 previous = json.loads(elder["last_location"]) if elder["last_location"] else None
                 require(not previous or data["recorded_at"] > previous["recorded_at"], "位置时间重复或早于已保存的位置", 409)
                 loc = {k: data[k] for k in ("lat", "lon", "accuracy", "recorded_at", "battery")}
+                if "provider" in data:
+                    require(data["provider"] in ("gps", "network"), "无效定位来源")
+                    loc["provider"] = data["provider"]
                 self.db.execute("UPDATE elders SET last_location=?,last_seen=?,applied_version=? WHERE id=?", (json.dumps(loc), now, data["applied_version"], elder["id"]))
                 if now - loc["recorded_at"] < 120:
                     self.resolve(elder["id"], "offline")

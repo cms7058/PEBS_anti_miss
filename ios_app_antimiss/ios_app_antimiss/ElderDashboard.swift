@@ -46,7 +46,7 @@ struct LocationDashboard: View {
                     Text("采集于 \(timeLabel(position.recorded_at))").font(.caption).foregroundStyle(stale ? Color.orange : Color.secondary)
                     Text(String(format: "纬度 %.6f · 经度 %.6f", position.lat, position.lon))
                         .font(.footnote.monospaced()).textSelection(.enabled)
-                    Text("坐标系 WGS-84").font(.caption2).foregroundStyle(.secondary)
+                    Text("\(position.sourceLabel) · 坐标系 WGS-84").font(.caption2).foregroundStyle(.secondary)
                 } else { Text(elder.paired ? "等待老人手机首次定位" : "请先绑定老人手机").font(.caption).foregroundStyle(.secondary) }
                 RemoteLocationView(elder: elder)
                 HStack {

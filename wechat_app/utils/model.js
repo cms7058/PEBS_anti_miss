@@ -34,6 +34,7 @@ function decorate(elder) {
     lastLabel: p ? time(p.recorded_at) : '尚未收到位置，请在老人端开启守护',
     stale: !p || Date.now()/1000-p.recorded_at > elder.settings.offline_after,
     batteryValue: p ? `${Math.round(p.battery)}%` : '—',
+    sourceLabel: p ? ({gps: 'GPS 卫星定位', network: '网络辅助定位（估算位置）'}[p.provider] || '定位来源未上报') : '',
     accuracyValue: p ? `${Math.round(p.accuracy)} 米` : '—',
     modeTitle: automatic ? '自动守护' : '按需查询',
     tripActive: !!elder.settings.trip && ['active','arrived'].includes(elder.settings.trip.status),

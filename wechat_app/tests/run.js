@@ -27,6 +27,10 @@ function page(name){
  return page;
 }
 async function main(){
+ const sourceFixture={settings:{},events:[],location:{lat:31,lon:121,accuracy:30,battery:70,recorded_at:1800000000}};
+ assert.equal(model.decorate(sourceFixture).sourceLabel,'定位来源未上报');
+ assert.equal(model.decorate({...sourceFixture,location:{...sourceFixture.location,provider:'network'}}).sourceLabel,'网络辅助定位（估算位置）');
+ assert.equal(model.decorate({...sourceFixture,location:{...sourceFixture.location,provider:'gps'}}).sourceLabel,'GPS 卫星定位');
  assert.equal(api.validateServer('http://121.4.117.45:8087/'),'http://121.4.117.45:8087');
  env='trial';assert.equal(api.validateServer('http://121.4.117.45:8087'),'http://121.4.117.45:8087');
  env='release';assert.throws(()=>api.validateServer('http://121.4.117.45:8087'));
