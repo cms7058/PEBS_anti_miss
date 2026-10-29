@@ -2,6 +2,17 @@ import Foundation
 
 @main struct ContractChecks {
     static func main() throws {
+        let previous = LocationRequest(id: "old", requested_at: 1, expires: 181, state: "completed", completed_at: 2, completion_source: "requested")
+        precondition(previous.isTerminal(for: "old"))
+        precondition(!previous.isTerminal(for: "new"), "cached success cannot finish a later query after GET fails")
+        let pending = LocationRequest(id: "new", requested_at: 200, expires: 380, state: "pending", completed_at: nil, completion_source: nil)
+        precondition(!pending.isTerminal(for: "new"))
+        let received = LocationRequest(id: "new", requested_at: 200, expires: 380, state: "received", completed_at: nil, completion_source: nil)
+        precondition(!received.isTerminal(for: "new"))
+        let completed = LocationRequest(id: "new", requested_at: 200, expires: 380, state: "completed", completed_at: 201, completion_source: "requested")
+        precondition(completed.isTerminal(for: "new"))
+        let expired = LocationRequest(id: "new", requested_at: 200, expires: 380, state: "expired", completed_at: nil, completion_source: nil)
+        precondition(expired.isTerminal(for: "new") && !expired.isTerminal(for: "old"))
         let data = try Data(contentsOf: URL(fileURLWithPath: CommandLine.arguments[1]))
         let list = try JSONDecoder().decode(ElderList.self, from: data)
         precondition(list.elders.count == 1)

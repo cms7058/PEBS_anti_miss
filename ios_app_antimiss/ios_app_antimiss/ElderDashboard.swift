@@ -61,9 +61,13 @@ struct LocationDashboard: View {
                         .disabled(model.busy)
                     Spacer()
                     if let position = elder.location {
-                        Button { MKMapItem(placemark: MKPlacemark(coordinate: position.coordinate)).openInMaps() } label: { Label("打开地图", systemImage: "arrow.up.right.square") }
+                        Button { openGuardLocation(position, name: elder.name + " · 老人采集位置") } label: { Label("查看老人位置", systemImage: "arrow.up.right.square") }
                     }
                 }.font(.subheadline).buttonStyle(.borderless)
+                if elder.location != nil {
+                    Text("系统地图中的蓝点是这部苹果手机；请查看标有“\(elder.name) · 老人采集位置”的地点标记。")
+                        .font(.caption2).foregroundStyle(.secondary)
+                }
                 if let failure = model.refreshFailure { Label(failure, systemImage: "exclamationmark.circle").font(.caption).foregroundStyle(.orange) }
                 if let refreshed = model.lastRefresh {
                     Text("记录读取于 \(refreshed.formatted(date: .omitted, time: .standard)) · 位置与电量为上次采集值")
@@ -189,4 +193,15 @@ struct RadiusEditor: View {
                 .font(.caption).foregroundStyle(valid ? Color.secondary : Color.orange)
         }.padding(.vertical, 8)
     }
+}
+
+// Name and center the destination explicitly; the system map can also show this
+// iPhone's separate blue user-location dot, which is never the elder API position.
+func openGuardLocation(_ position: Position, name: String) {
+    let item = MKMapItem(placemark: MKPlacemark(coordinate: position.coordinate))
+    item.name = name
+    item.openInMaps(launchOptions: [
+        MKLaunchOptionsMapCenterKey: NSValue(mkCoordinate: position.coordinate),
+        MKLaunchOptionsMapSpanKey: NSValue(mkCoordinateSpan: MKCoordinateSpan(latitudeDelta: 0.01, longitudeDelta: 0.01))
+    ])
 }

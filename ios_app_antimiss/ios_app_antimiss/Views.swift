@@ -188,7 +188,7 @@ struct ElderView: View {
                                 Text(event.message).font(.headline)
                                 Text(timeLabel(event.created)).font(.caption).foregroundStyle(.secondary)
                                 if let position = event.location {
-                                    Button("查看事件记录的位置（\(timeLabel(position.recorded_at))）") { MKMapItem(placemark: MKPlacemark(coordinate: position.coordinate)).openInMaps() }
+                                    Button("查看事件记录的位置（\(timeLabel(position.recorded_at))）") { openGuardLocation(position, name: elder.name + " · 事件记录位置") }
                                 }
                                 Text(event.active == 1 ? "异常仍存在" : "异常已恢复").foregroundStyle(event.active == 1 ? .orange : .secondary)
                                 if let handler = event.handler { Text("\(handler) 已接手").foregroundStyle(.teal) }
@@ -462,20 +462,25 @@ struct RemoteLocationView: View {
             do {
                 // The server reuses a live request, or creates one if the cached request expired.
                 // A previous local timeout can leave this view holding an old pending snapshot.
+                let requestedID: String
                 do {
-                    let _: LocationRequest = try await model.request("/elders/\(elder.id)/location-request", method: "POST", body: [:])
+                    let submitted: LocationRequest = try await model.request("/elders/\(elder.id)/location-request", method: "POST", body: [:])
+                    requestedID = submitted.id
                 } catch {
                     if Task.isCancelled { throw error }
                     try await model.refreshElder(elder.id)
                     guard let request = model.elders.first(where: { $0.id == elder.id })?.location_request,
                           ["pending", "received"].contains(request.state) else { throw error }
+                    requestedID = request.id
                 }
                 try Task.checkCancellation()
                 while !Task.isCancelled && queryFollowing && queryRun == run {
                     do { try await model.refreshElder(elder.id) }
                     catch { if Task.isCancelled { return }; queryMessage = "后台连接暂时失败，正在继续读取同一次请求的结果。" }
                     let current = model.elders.first(where: { $0.id == elder.id })?.location_request
-                    if let current, !["pending", "received"].contains(current.state) {
+                    // A failed/discarded GET leaves an older snapshot in AppModel.
+                    // Its completed request must never finish this newer query.
+                    if let current, current.isTerminal(for: requestedID) {
                         queryMessage = current.state == "completed" ? nil : current.label
                         queryFollowing = false
                         queryWaiting = false

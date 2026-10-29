@@ -82,6 +82,9 @@ struct LocationRequest: Codable {
     let state: String
     let completed_at: Double?
     let completion_source: String?
+    func isTerminal(for requestID: String) -> Bool {
+        id == requestID && ["completed", "expired"].contains(state)
+    }
     // Expiry is authoritative on the server, not the manager phone's wall clock.
     var waiting: Bool { ["pending", "received"].contains(state) }
     var label: String {
