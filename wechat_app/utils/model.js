@@ -6,6 +6,7 @@ function position(value) {
 }
 function decorate(elder) {
   const p = elder.location, request = elder.location_request;
+  const stale = !p || (elder.location_freshness && elder.location_freshness.state === 'historical') || Date.now()/1000-p.recorded_at >= 180;
   const waiting = !!request && ['pending','received'].includes(request.state);
   const automatic=!!elder.settings.fence || !!(elder.settings.trip && elder.settings.trip.status==='active');
   const directReady=!!elder.elder_push && elder.elder_push.command_stream_registered===true;
@@ -16,6 +17,7 @@ function decorate(elder) {
     if(p && p.recorded_at>=request.requested_at) requestLabel=waiting?'已收到更新位置，正在同步请求状态':'已显示更新的位置；此前的定位请求未获得直接响应';
     else if(waiting && !canRequestPosition) requestLabel='远程定位通道不可用，暂未能向老人手机发送请求';
   }
+  if(request && request.state==='completed' && stale) requestLabel='上次定位请求已完成；当前暂无3分钟内的位置，请重新获取';
   let pushLabel=!elder.elder_push ? '' : !elder.elder_push.configured ? '老人端推送尚未配置，远程请求暂不能主动送达' : !elder.elder_push.registered ? '尚未收到这台手机的推送登记，请检查老人端的版本及推送状态' : elder.elder_push.location_delivery && elder.elder_push.location_delivery.state === 'failed' ? '推送发送失败，请检查服务器配置' : '老人端推送已配置，手机休眠或服务停止可能影响响应';
   const diag=elder.device_diagnostics;
   if(directReady)pushLabel='备用指令连接已登记；实际响应以手机读取命令为准';
@@ -32,7 +34,9 @@ function decorate(elder) {
     pushLabel,
     settingsPushFailed: !!(elder.elder_push && elder.elder_push.settings_delivery && elder.elder_push.settings_delivery.state === 'failed'),
     lastLabel: p ? time(p.recorded_at) : '尚未收到位置，请在老人端开启守护',
-    stale: !p || Date.now()/1000-p.recorded_at > elder.settings.offline_after,
+    stale,
+    locationStateLabel: !p ? '尚无位置' : stale ? '历史位置' : '3分钟内采集',
+    freshnessLabel: !p ? '尚未收到位置' : stale ? '暂无3分钟内的位置 · 地图仅为历史参考，请获取最新位置' : '位置有效期3分钟，实际位置以采集时刻为准',
     batteryValue: p ? `${Math.round(p.battery)}%` : '—',
     sourceLabel: p ? ({gps: 'GPS 卫星定位', network: '网络辅助定位（估算位置）'}[p.provider] || '定位来源未上报') : '',
     accuracyValue: p ? `${Math.round(p.accuracy)} 米` : '—',
@@ -60,7 +64,8 @@ function mapData(elder) {
     circles.push({ latitude: p.lat, longitude: p.lon, radius: point.radius || point.accuracy || 10,
       color, fillColor: color.substring(0,7)+'18', strokeWidth: 2 });
   }
-  add(elder.location, 1, '最近上报位置', '#087F8C');
+  const old = elder.location && ((elder.location_freshness && elder.location_freshness.state === 'historical') || Date.now()/1000-elder.location.recorded_at >= 180);
+  add(elder.location, 1, old ? '历史位置（已超过3分钟）' : '最近采集位置', old ? '#C77B18' : '#087F8C');
   add(elder.settings.fence, 2, '日常围栏', '#3767B1');
   if (elder.settings.trip && elder.settings.trip.status !== 'cancelled') add(elder.settings.trip, 3, elder.settings.trip.name, '#C77B18');
   return { markers, circles, mapCenter: center, hasMap: !!center };

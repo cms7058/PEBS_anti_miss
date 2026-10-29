@@ -50,6 +50,29 @@ class SafetyFlowTests(unittest.TestCase):
     def request_location(self):
         return self.call("POST", f"/elders/{self.eid}/location-request")
 
+    def test_three_minute_freshness_preserves_history_and_requires_new_capture(self):
+        self.assertEqual(self.elder()["location_freshness"]["state"], "missing")
+        self.upload()
+        capture = self.elder()["location"]
+        self.now += 179.999
+        self.assertEqual(self.elder()["location_freshness"]["state"], "recent")
+        self.now += .001
+        snapshot = self.elder()
+        self.assertEqual(snapshot["location_freshness"]["state"], "historical")
+        self.assertEqual(snapshot["location_freshness"]["expires_at"], capture["recorded_at"] + 180)
+        self.assertEqual(snapshot["location"], capture)
+        # Expiry must not erase the timestamp used for anti-replay or offline detection.
+        request = self.request_location()
+        self.assertEqual(self.elder()["location_request"]["state"], "pending")
+        with self.assertRaises(APIError):
+            self.call("POST", "/device/location", dict(capture, applied_version=0, request_id=request["id"]), self.device)
+        self.assertEqual(self.elder()["location_request"]["state"], "pending")
+        self.now += 1
+        self.upload()
+        snapshot = self.elder()
+        self.assertEqual(snapshot["location_freshness"]["state"], "recent")
+        self.assertEqual(snapshot["location_request"]["state"], "completed")
+
     def test_location_provider_roundtrip_and_legacy_uploads(self):
         self.upload()
         self.assertNotIn("provider", self.elder()["location"])

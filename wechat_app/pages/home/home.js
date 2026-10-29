@@ -1,7 +1,11 @@
 const api=require('../../utils/api'),ui=require('../../utils/ui'),model=require('../../utils/model');
 Page({
  data:{ elders:[],name:'',newName:'',invite:'',busy:false,error:'',loaded:false },
- onShow(){ if(ui.requireLogin()){this.setData({name:api.session().name});this.refresh();} },
+ onShow(){ if(ui.requireLogin()){this.setData({name:api.session().name});this.refresh();clearInterval(this.ageTimer);this.ageTimer=setInterval(()=>{
+   const elders=this.data.elders.map(model.decorate);
+   if(elders.some((elder,index)=>elder.stale!==this.data.elders[index].stale))this.setData({elders});
+ },1000);} },
+ onHide(){clearInterval(this.ageTimer);},onUnload(){clearInterval(this.ageTimer);},
  onPullDownRefresh(){ this.refresh().finally(()=>wx.stopPullDownRefresh()); },
  input(e){this.setData({[e.currentTarget.dataset.field]:e.detail.value});},
  async load(){const result=await api.request('/elders');this.setData({elders:result.elders.map(model.decorate),loaded:true});},

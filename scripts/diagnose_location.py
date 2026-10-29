@@ -96,6 +96,7 @@ def diagnose(database, code_root, now=None, live_push=False):
                 "last_capture_age_seconds": age(location.get("recorded_at"), now) if location else None,
                 "location_provider": location.get("provider", "unknown") if location else None,
                 "location_accuracy_metres": location.get("accuracy") if location else None,
+                "location_freshness": "missing" if not location else "historical" if now - location["recorded_at"] >= 180 else "recent",
                 "request": None,
                 "location_hint": None,
             }

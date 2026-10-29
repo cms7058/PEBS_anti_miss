@@ -5,7 +5,7 @@
  <view wx:if="{{loaded && !elders.length}}" class="card muted">还没有家人。添加老人，或接受其他家属的邀请。</view>
  <view class="card" wx:for="{{elders}}" wx:key="id" data-id="{{item.id}}" bindtap="open">
   <view class="row"><text class="heading">{{item.name}}</text><text class="tag">{{item.paired ? '已绑定' : '待绑定'}}</text></view>
-  <view class="{{item.stale ? 'warning' : 'muted'}}">{{item.lastLabel}}</view><view class="muted">{{item.accuracyLabel}}</view>
+  <view class="{{item.stale ? 'warning' : 'muted'}}">{{item.locationStateLabel}} · {{item.lastLabel}}</view><view class="muted">{{item.accuracyLabel}}</view>
   <view wx:if="{{item.activeCount}}" class="warning">{{item.activeCount}} 条待接手提醒</view><view class="link">查看位置与守护设置 →</view>
  </view>
  <view class="card"><view class="heading">添加老人</view><input placeholder="老人称呼，如：妈妈" maxlength="40" value="{{newName}}" data-field="newName" bindinput="input"/><button class="primary" bindtap="add" disabled="{{busy}}">添加并生成绑定码</button></view>

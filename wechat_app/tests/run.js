@@ -74,11 +74,11 @@ async function main(){
  const response=await new Promise(resolve=>{queue.push(resolve);backend.stdin.write(JSON.stringify({method:'POST',path:'/device/location',token:paired.token,data:{lat:31.2304,lon:121.4737,accuracy:10,recorded_at:Date.now()/1000,battery:80,applied_version:elder.version}})+'\n');});
  assert.equal(response.statusCode,200);elder=await api.request(api.elderPath(eid));decorated=model.decorate(elder);
  assert.equal(decorated.stale,false);assert.equal(decorated.syncLabel,'设备已确认当前设置');assert.equal(model.mapData(elder).markers.length,3);
- // Opening a detail page loads once; ordinary telemetry must not start a periodic timer.
+ // Opening a detail page loads once; the new expiry timer only updates local presentation.
  const manualPage=page('elder');manualPage.onLoad({id:eid});
- const savedInterval=global.setInterval;let intervals=0,loads=0,alertLoads=0,alertTick;
- global.setInterval=fn=>{intervals++;alertTick=fn;return 0;};manualPage.refresh=()=>{loads++;return Promise.resolve();};manualPage.loadAlerts=async()=>{alertLoads++;};
- try{manualPage.onShow();assert.equal(loads,1);assert.equal(intervals,1);alertTick();assert.equal(loads,1);assert.equal(alertLoads,1);}finally{global.setInterval=savedInterval;manualPage.stop();}
+ const savedInterval=global.setInterval;let intervals=0,loads=0,alertLoads=0,alertTick,ageTick;
+ global.setInterval=(fn,ms)=>{intervals++;if(ms===15000)alertTick=fn;else if(ms===1000)ageTick=fn;return 0;};manualPage.refresh=()=>{loads++;return Promise.resolve();};manualPage.loadAlerts=async()=>{alertLoads++;};
+ try{manualPage.onShow();assert.equal(loads,1);assert.equal(intervals,2);ageTick();alertTick();assert.equal(loads,1);assert.equal(alertLoads,1);}finally{global.setInterval=savedInterval;manualPage.stop();}
  const diagnostic=model.decorate(Object.assign({},elder,{elder_push:{configured:true,registered:false},device_diagnostics:{app_version:'0.1.4',push_consent:true,cid_available:false}}));
  assert.match(diagnostic.pushLabel,/SDK尚未取得标识/);
  // Server-side offline monitoring produces a real event; exercise the actual detail-page acknowledgement.

@@ -79,7 +79,9 @@ struct HomeView: View {
                         NavigationLink(value: elder.id) {
                             VStack(alignment: .leading, spacing: 8) {
                                 Label(elder.name, systemImage: "person.crop.circle.fill").font(.title3.bold())
-                                Text(summary(elder)).font(.subheadline).foregroundStyle(.secondary)
+                                TimelineView(.periodic(from: .now, by: 1)) { context in
+                                    Text(summary(elder, at: context.date)).font(.subheadline).foregroundStyle(.secondary)
+                                }
                                 let count = elder.events.filter { $0.active == 1 && $0.handler == nil }.count
                                 if count > 0 { Text("\(count) 条提醒待处理").foregroundStyle(.orange) }
                             }.padding(.vertical, 6)
@@ -120,10 +122,10 @@ struct HomeView: View {
             .sheet(item: Binding(get: { model.selectedID.map { Selection(id: $0) } }, set: { model.selectedID = $0?.id })) { selection in NavigationStack { ElderView(id: selection.id).toolbar { Button("完成") { model.selectedID = nil } } } }
         }
     }
-    func summary(_ elder: Elder) -> String {
+    func summary(_ elder: Elder, at date: Date) -> String {
         if !elder.paired { return "等待老人手机绑定" }
         guard let loc = elder.location else { return "等待首次定位" }
-        return "最近定位 \(timeLabel(loc.recorded_at)) · 电量 \(Int(loc.battery))%"
+        return "\(elder.locationIsHistorical(at: date) ? "历史位置 · " : "最近采集 · ")\(timeLabel(loc.recorded_at)) · 采集时电量 \(Int(loc.battery))%"
     }
     var account: some View {
         NavigationStack {
@@ -400,6 +402,7 @@ struct DataSyncStatusView: View {
 struct RemoteLocationView: View {
     @EnvironmentObject var model: AppModel
     let elder: Elder
+    let historical: Bool
     @State private var queryRun = 0
     @State private var queryWaiting = false
     @State private var queryFollowing = false
@@ -423,6 +426,8 @@ struct RemoteLocationView: View {
             Label(message, systemImage: "info.circle").font(.caption).foregroundStyle(.secondary)
         } else if pending && !queryWaiting {
             Text("上次请求仍在后台处理，可查询结果；地图保留上次采集的位置。").font(.caption).foregroundStyle(.secondary)
+        } else if historical && elder.location_request?.state == "completed" {
+            Text("上次定位请求已完成；当前暂无3分钟内的位置，请重新获取").font(.caption).foregroundStyle(.orange)
         } else if let label = elder.positionRequestLabel {
             Label(label, systemImage: elder.location_request?.state == "completed" ? "checkmark.circle" : "clock")
                 .font(.caption).foregroundStyle(.secondary)
@@ -443,7 +448,7 @@ struct RemoteLocationView: View {
             let current = model.elders.first(where: { $0.id == elder.id })?.location_request
             let state = current?.state
             if let current, !["pending", "received"].contains(current.state) {
-                queryMessage = current.label
+                queryMessage = current.state == "completed" ? "正在确认本次请求，地图仍为上次采集位置。" : current.label
             } else {
             queryMessage = state == "received" ? "手机已收到请求，定位仍在进行；新位置到达后将自动显示。"
                 : state == "pending" ? "尚未收到手机响应，正在继续跟进；地图仍为上次采集位置。"
@@ -471,7 +476,7 @@ struct RemoteLocationView: View {
                     catch { if Task.isCancelled { return }; queryMessage = "后台连接暂时失败，正在继续读取同一次请求的结果。" }
                     let current = model.elders.first(where: { $0.id == elder.id })?.location_request
                     if let current, !["pending", "received"].contains(current.state) {
-                        queryMessage = current.label
+                        queryMessage = current.state == "completed" ? nil : current.label
                         queryFollowing = false
                         queryWaiting = false
                         return

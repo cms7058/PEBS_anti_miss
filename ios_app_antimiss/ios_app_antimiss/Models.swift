@@ -38,6 +38,7 @@ struct Position: Codable {
         default: return "定位来源未上报"
         }
     }
+    func isHistorical(at date: Date) -> Bool { date.timeIntervalSince1970 - recorded_at >= 180 }
     var coordinate: CLLocationCoordinate2D { let p = Coordinates.display(lat: lat, lon: lon); return .init(latitude: p.lat, longitude: p.lon) }
     var rawCoordinate: CLLocationCoordinate2D { .init(latitude: lat, longitude: lon) }
 }
@@ -132,6 +133,12 @@ struct SetupRequest: Codable {
 struct FenceStatus: Codable { let state: String; let message: String }
 struct AlertUpdate: Codable { let id: String; let events: [GuardEvent] }
 struct AlertUpdates: Codable { let elders: [AlertUpdate] }
+struct LocationFreshness: Codable {
+    let state: String
+    let valid_for_seconds: Double
+    let expires_at: Double?
+    let checked_at: Double
+}
 struct Elder: Codable, Identifiable {
     let id: String
     let name: String
@@ -141,6 +148,7 @@ struct Elder: Codable, Identifiable {
     let setup_request: SetupRequest?
     let elder_push: ElderPushStatus?
     let location_request: LocationRequest?
+    var location_freshness: LocationFreshness? = nil
     let paired: Bool
     let is_owner: Bool
     let can_edit: Bool
@@ -153,6 +161,9 @@ struct Elder: Codable, Identifiable {
     var events: [GuardEvent]
 }
 extension Elder {
+    func locationIsHistorical(at date: Date) -> Bool {
+        location == nil || location_freshness?.state == "historical" || location?.isHistorical(at: date) == true
+    }
     var pushDescription: String? {
         guard let transport = elder_push else { return nil }
         if transport.command_stream_registered == true { return transport.label }
@@ -172,7 +183,10 @@ extension Elder {
     }
     var positionRequestLabel: String? {
         guard let request = location_request else { return nil }
-        if request.state == "completed" { return request.label }
+        if request.state == "completed" {
+            if locationIsHistorical(at: Date()) { return "上次定位请求已完成；当前暂无3分钟内的位置，请重新获取" }
+            return request.label
+        }
         if let position = location, position.recorded_at >= request.requested_at {
             return request.waiting ? "已收到更新位置，正在同步请求状态" : "已显示更新的位置；此前的定位请求未获得直接响应"
         }

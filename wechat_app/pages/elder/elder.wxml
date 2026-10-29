@@ -6,7 +6,8 @@
   <view class="card location-card">
    <view class="map-frame"><map wx:if="{{hasMap}}" class="map" latitude="{{mapCenter.lat}}" longitude="{{mapCenter.lon}}" markers="{{markers}}" circles="{{circles}}" scale="14"/><view wx:else class="empty-map">等待首次定位</view><view class="map-badge">◎ {{elder.modeTitle}}</view></view>
    <view class="location-content">
-    <view class="metrics"><view><view class="metric-caption">手机电量</view><view class="metric-value">{{elder.batteryValue}}</view></view><view><view class="metric-caption">定位误差</view><view class="metric-value">{{elder.accuracyValue}}</view></view><view><view class="metric-caption">位置状态</view><view class="metric-value {{elder.stale ? 'warning' : ''}}">{{elder.stale ? '历史位置' : '已上报'}}</view></view></view>
+    <view class="metrics"><view><view class="metric-caption">{{elder.stale ? '上次电量' : '采集时电量'}}</view><view class="metric-value">{{elder.batteryValue}}</view></view><view><view class="metric-caption">定位误差</view><view class="metric-value">{{elder.accuracyValue}}</view></view><view><view class="metric-caption">位置状态</view><view class="metric-value {{elder.stale ? 'warning' : ''}}">{{elder.locationStateLabel}}</view></view></view>
+    <view class="{{elder.stale ? 'notice' : 'muted'}}">{{elder.freshnessLabel}}</view>
     <view class="muted">{{elder.lastLabel}}</view>
     <view class="muted">{{elder.sourceLabel}}</view>
     <view wx:if="{{elder.location}}" class="muted selectable">{{elder.coordinateLabel}}</view>

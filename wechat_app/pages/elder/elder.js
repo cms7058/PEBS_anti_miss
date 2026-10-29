@@ -4,11 +4,17 @@ Page({
  onLoad(query){this.id=query.id;this.visible=false;this.sequence=0;this.queryEpoch=0;this.query=null;},
  onShow(){if(!ui.requireLogin())return;this.visible=true;
    Promise.resolve(this.refresh()).then(()=>{if(this.visible)this.resumeQuery();});
+   clearInterval(this.ageTimer);this.ageTimer=setInterval(()=>this.updateAge(),1000);
    clearInterval(this.alertTimer);this.alertTimer=setInterval(()=>{
    if(!this.data.busy)this.loadAlerts().catch(error=>{if(this.visible)this.setData({alertError:error.message||'提醒同步失败'});});
  },15000);},
  onHide(){this.stop();},onUnload(){this.stop();},
- stop(){this.visible=false;this.sequence++;this.pauseQuery();clearInterval(this.alertTimer);},
+ stop(){this.visible=false;this.sequence++;this.pauseQuery();clearInterval(this.alertTimer);clearInterval(this.ageTimer);},
+ updateAge(){if(this.visible&&this.data.elder){
+   const elder=this.data.elder,updated=model.decorate(elder);
+   // Local display only: no network request, GPS acquisition or command polling.
+   if(updated.stale!==elder.stale)this.setData(Object.assign({elder:updated},model.mapData(elder)));
+ }},
  pauseQuery(){this.queryEpoch++;clearTimeout(this.queryTimer);clearTimeout(this.budgetTimer);this.queryTimer=null;this.budgetTimer=null;this.setData({queryWaiting:false,queryTracking:false});},
  finishQuery(message=''){this.pauseQuery();this.sequence++;this.query=null;this.setData({queryError:message});},
  onPullDownRefresh(){Promise.resolve(this.refresh()).finally(()=>wx.stopPullDownRefresh());},

@@ -17,6 +17,7 @@ from backend.elder_push import ElderPushWorker, run_command_push, configured as 
 from backend.command_stream import CommandStream
 
 
+LOCATION_FRESH_SECONDS = 180
 MAX_FENCE_SAMPLE_GAP = 180
 
 
@@ -186,6 +187,16 @@ class Store:
     def snapshot(self, elder, uid):
         result = {k: elder[k] for k in ("id", "name", "last_seen", "version", "applied_version", "created")}
         result["location"] = json.loads(elder["last_location"]) if elder["last_location"] else None
+        # Freshness is separate from retention and the automatic offline alarm threshold.
+        # Preserve the last known point for recovery, never refresh its capture timestamp.
+        loc = result["location"]
+        expires = loc["recorded_at"] + LOCATION_FRESH_SECONDS if loc else None
+        result["location_freshness"] = {
+            "state": "missing" if loc is None else "recent" if self.clock() < expires else "historical",
+            "valid_for_seconds": LOCATION_FRESH_SECONDS,
+            "expires_at": expires,
+            "checked_at": self.clock(),
+        }
         result["settings"] = json.loads(elder["settings"])
         result["location_request"] = self.location_request(elder["id"])
         result["elder_push"] = self.elder_push_status(elder["id"])

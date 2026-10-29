@@ -5,15 +5,18 @@ struct LocationDashboard: View {
     @EnvironmentObject var model: AppModel
     let elder: Elder
     @Binding var camera: MapCameraPosition
-    private var stale: Bool {
-        guard let position = elder.location else { return true }
-        return Date().timeIntervalSince1970 - position.recorded_at > elder.settings.offline_after
-    }
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
+        // Update age locally even if the user leaves the page open without refreshing.
+        TimelineView(.periodic(from: .now, by: 1)) { context in
+            content(at: context.date)
+        }
+    }
+    private func content(at date: Date) -> some View {
+        let stale = elder.locationIsHistorical(at: date)
+        return VStack(alignment: .leading, spacing: 16) {
             Map(position: $camera) {
                 if let position = elder.location {
-                    Marker(elder.name, systemImage: "person.fill", coordinate: position.coordinate).tint(.teal)
+                    Marker(stale ? "历史位置 · \(elder.name)" : elder.name, systemImage: "person.fill", coordinate: position.coordinate).tint(stale ? .orange : .teal)
                     MapCircle(center: position.coordinate, radius: position.accuracy).foregroundStyle(.teal.opacity(0.08))
                 }
                 if let fence = elder.settings.fence {
@@ -38,9 +41,13 @@ struct LocationDashboard: View {
                 }
             VStack(alignment: .leading, spacing: 14) {
                 HStack(alignment: .top) {
-                    DashboardMetric(symbol: "battery.75percent", title: "手机电量", value: elder.location.map { "\(Int($0.battery))%" } ?? "—")
+                    DashboardMetric(symbol: "battery.75percent", title: stale ? "上次电量" : "采集时电量", value: elder.location.map { "\(Int($0.battery))%" } ?? "—")
                     DashboardMetric(symbol: "scope", title: "定位误差", value: elder.location.map { "约 \(Int($0.accuracy)) 米" } ?? "—")
                     DashboardMetric(symbol: stale ? "clock.badge.exclamationmark" : "clock", title: stale ? "历史位置" : "采集时间", value: elder.location.map { Date(timeIntervalSince1970: $0.recorded_at).formatted(date: .omitted, time: .shortened) } ?? "未定位")
+                }
+                if stale && elder.location != nil {
+                    Label("暂无3分钟内的位置 · 地图仅为历史参考，请获取最新位置", systemImage: "clock.badge.exclamationmark")
+                        .font(.caption).foregroundStyle(.orange)
                 }
                 if let position = elder.location {
                     Text("采集于 \(timeLabel(position.recorded_at))").font(.caption).foregroundStyle(stale ? Color.orange : Color.secondary)
@@ -48,7 +55,7 @@ struct LocationDashboard: View {
                         .font(.footnote.monospaced()).textSelection(.enabled)
                     Text("\(position.sourceLabel) · 坐标系 WGS-84").font(.caption2).foregroundStyle(.secondary)
                 } else { Text(elder.paired ? "等待老人手机首次定位" : "请先绑定老人手机").font(.caption).foregroundStyle(.secondary) }
-                RemoteLocationView(elder: elder)
+                RemoteLocationView(elder: elder, historical: stale)
                 HStack {
                     Button { Task { await model.perform { try await model.refresh() } } } label: { Label("刷新记录", systemImage: "arrow.clockwise") }
                         .disabled(model.busy)

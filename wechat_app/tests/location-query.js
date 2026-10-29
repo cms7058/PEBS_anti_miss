@@ -35,9 +35,27 @@ async function main(){
   if(method==='POST'){postCount++;state.location_request={...request};return {...request};}
   readCount++;if(readOverride)return readOverride();return JSON.parse(JSON.stringify(state));
  };
+ // The cached point ages locally, without asking the phone/server for another fix.
+ reset();let agePage=page();
+ const captured=now/1000;
+ state.location={lat:31,lon:121,recorded_at:captured,accuracy:20,battery:70};
+ state.location_request={...request,state:'completed',requested_at:captured,completed_at:captured};
+ await agePage.load();assert.equal(agePage.data.elder.stale,false);
+ now+=179999;agePage.updateAge();assert.equal(agePage.data.elder.stale,false);
+ const readsBeforeExpiry=readCount;
+ now+=1;agePage.updateAge();
+ assert.equal(agePage.data.elder.stale,true);
+ assert.match(agePage.data.elder.requestLabel,/当前暂无3分钟/);
+ assert.match(agePage.data.markers[0].callout.content,/历史/);
+ assert.equal(agePage.data.elder.location.recorded_at,captured);
+ assert.equal(readCount,readsBeforeExpiry);assert.equal(postCount,0);agePage.stop();
+
  // Server/phone clocks may differ; fast completion is detected every 400ms.
  reset();let p=page();await p.locate();assert.equal(p.data.queryWaiting,true);complete();
  await tick(400);assert.equal(p.data.elder.location_request.state,'completed');assert.equal(p.data.queryWaiting,false);assert.equal(postCount,1);p.stop();
+ // A completed cached request must not turn the next explicit tap into a no-op.
+ reset();p=page();p.data.elder.location_request={...request,state:'completed'};
+ await p.locate();assert.equal(postCount,1);assert.equal(p.data.elder.location_request.state,'pending');p.stop();
  // Lost POST response is recovered by GET, never by a duplicate push.
  reset();p=page();const normalRequest=api.request;
  api.request=async(path,method)=>{
